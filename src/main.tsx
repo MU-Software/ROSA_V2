@@ -1,43 +1,25 @@
-import { StrictMode } from "react";
+import { CssBaseline, ThemeProvider, createTheme } from "@mui/material";
+import { StrictMode, useEffect, useState, type FC } from "react";
 import { createRoot } from "react-dom/client";
-import { Route, Routes } from "react-router";
-import { BrowserRouter } from "react-router";
-import {
-  Box,
-  Container,
-  CssBaseline,
-  ThemeProvider,
-  Typography,
-  createTheme,
-} from "@mui/material";
-import { isTauri } from "./adapters";
+import { BrowserRouter, Route, Routes } from "react-router";
+import { TopBar } from "./components/elements/topbar";
+import { AppContext, loadAppConfig, saveAppConfig, type AppContextData } from "./contexts";
+import { DebugPage } from "./pages/debug";
 
-const theme = createTheme({
-  colorSchemes: {
-    dark: true,
-  },
-});
+const theme = createTheme({});
 
-function Home() {
+const App: FC = () => {
+  const [appState, setAppContext] = useState<AppContextData>(loadAppConfig());
+  useEffect(() => { saveAppConfig(appState) }, [appState]);
+
   return (
-    <Container maxWidth="md" sx={{ py: 4 }}>
-      <Typography variant="h3" gutterBottom>
-        ROSA
-      </Typography>
-      <Typography variant="body1" color="text.secondary">
-        Platform: {isTauri() ? "Tauri (Native)" : "Web Browser"}
-      </Typography>
-    </Container>
-  );
-}
-
-function App() {
-  return (
-    <Box sx={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+    <AppContext.Provider value={{ ...appState, setAppContext }}>
+      <TopBar />
       <Routes>
-        <Route path="/" element={<Home />} />
+        <Route path="/" element={<></>} />
+        <Route path="/debug" element={<DebugPage />} />
       </Routes>
-    </Box>
+    </AppContext.Provider>
   );
 }
 
