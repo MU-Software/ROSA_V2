@@ -18,7 +18,10 @@ export interface PortInfo {
 }
 
 export interface SerialAdapter {
+  /** Tauri 는 시스템의 모든 포트를, 웹은 권한이 부여된 포트만 돌려준다. */
   listPorts(): Promise<PortInfo[]>;
+  /** 웹에서 포트 권한을 하나 추가한다. 브라우저가 클릭 직후에만 허용하므로 호출당 한 개. */
+  requestPort(): Promise<PortInfo | null>;
   open(path: string, baudRate: number): Promise<void>;
   close(path: string): Promise<void>;
   getReadable(path: string): ReadableStream<Uint8Array>;
@@ -47,6 +50,10 @@ class TauriSerialAdapter implements SerialAdapter {
       vid: p.vid ?? undefined,
       pid: p.pid ?? undefined,
     }));
+  }
+
+  async requestPort(): Promise<PortInfo | null> {
+    return null;
   }
 
   async open(path: string, baudRate: number): Promise<void> {
@@ -98,46 +105,47 @@ class TauriSerialAdapter implements SerialAdapter {
 
 export class WebSerialAdapter implements SerialAdapter {
   private ports = new Map<string, SerialPort>();
+  private keyCounter = 0;
 
-  async acquirePorts(): Promise<SerialPort[]> {
+  // 브라우저가 주는 포트 목록의 순서를 신뢰할 수 없어, 객체 동일성으로 키를 고정한다.
+  private track(port: SerialPort): string {
+    for (const [key, tracked] of this.ports) {
+      if (tracked === port) return key;
+    }
+    const key = `web-serial-${this.keyCounter++}`;
+    this.ports.set(key, port);
+    return key;
+  }
+
+  private describe(key: string, port: SerialPort): PortInfo {
+    const info = port.getInfo();
+    return { path: key, portType: "usb", vid: info.usbVendorId, pid: info.usbProductId };
+  }
+
+  async listPorts(): Promise<PortInfo[]> {
     const granted = await navigator.serial.getPorts();
-    if (granted.length > 0) return granted;
+    return granted.map((port) => this.describe(this.track(port), port));
+  }
+
+  async requestPort(): Promise<PortInfo | null> {
     try {
-      return [await navigator.serial.requestPort()];
+      const port = await navigator.serial.requestPort();
+      return this.describe(this.track(port), port);
     } catch (err) {
-      if (err instanceof DOMException && err.name === "NotFoundError") return [];
+      if (err instanceof DOMException && err.name === "NotFoundError") return null;
       throw err;
     }
   }
 
-  attach(path: string, port: SerialPort): void {
-    this.ports.set(path, port);
-  }
-
-  async listPorts(): Promise<PortInfo[]> {
-    const ports = await navigator.serial.getPorts();
-    return ports.map((port, i) => {
-      const info = port.getInfo();
-      return {
-        path: `web-serial-${i}`,
-        portType: "usb",
-        vid: info.usbVendorId,
-        pid: info.usbProductId,
-      };
-    });
-  }
-
   async open(path: string, baudRate: number): Promise<void> {
-    const port = this.ports.get(path) ?? (await navigator.serial.requestPort());
-    // readable 이 있으면 학습 세션이 이미 연 포트다.
+    const port = this.requirePort(path);
     if (!port.readable) await port.open({ baudRate });
-    this.ports.set(path, port);
   }
 
   async close(path: string): Promise<void> {
     const port = this.ports.get(path);
-    if (!port) return;
-    this.ports.delete(path);
+    // 권한은 유지해야 하므로 맵에서 지우지 않는다. 이미 닫혔으면 할 일이 없다.
+    if (!port?.readable && !port?.writable) return;
     try {
       await port.close();
     } catch (err) {

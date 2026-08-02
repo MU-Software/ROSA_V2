@@ -1,15 +1,16 @@
 import { BugReport, Delete, Refresh } from "@mui/icons-material";
-import { Alert, Box, Button, Card, Container, IconButton, List, ListItem, ListItemText, Stack, Typography } from "@mui/material";
-import { useCallback, useEffect, useMemo, useRef, useState, type FC, type PropsWithChildren } from "react";
+import { Alert, Button, Card, Chip, Container, IconButton, List, ListItem, ListItemText, Stack, Typography } from "@mui/material";
+import { useCallback, useEffect, useMemo, useState, type FC, type PropsWithChildren, type ReactNode } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { createUsbAdapter, type PortInfo, type UsbDeviceInfo } from "../adapters";
-import { serialManager, type LearningSession, type StoredLabel } from "../apis/serial";
+import { serialManager, type SerialDevice } from "../apis/serial";
 import { usesWorkerBridge } from "../apis/serialBridge";
 import { TooltipIconButton } from "../components/elements/buttons";
-import { FormSelect, FormSwitch, FormTextField } from "../components/elements/forms";
+import { FormSwitch, FormTextField } from "../components/elements/forms";
 import { useAppContext, useTopBar } from "../contexts";
-import { SerialLearningDialog } from "../dialogs/serialLearning";
-import { useSerialPort, useSerialPortList } from "../hooks/useSerialPort";
+import { DeviceAddDialog } from "../dialogs/deviceAdd";
+import { LabelAssignDialog } from "../dialogs/labelAssign";
+import { useSerialDevices, useSerialPort } from "../hooks/useSerialPort";
 
 const toMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
@@ -18,7 +19,7 @@ const EMPTY_USB_DEVICES: UsbDeviceInfo[] = [];
 
 const hex = (value?: number): string => (value === undefined ? "?" : `0x${value.toString(16).padStart(4, "0")}`);
 
-const DebugCard: FC<PropsWithChildren<{ title: string; action?: React.ReactNode }>> = ({ title, action, children }) => (
+const DebugCard: FC<PropsWithChildren<{ title: string; action?: ReactNode }>> = ({ title, action, children }) => (
   <Card sx={{ mt: 4, p: 2 }}>
     <Stack direction="row" sx={{ alignItems: "center", justifyContent: "space-between" }}>
       <Typography variant="h6" gutterBottom>{title}</Typography>
@@ -27,6 +28,24 @@ const DebugCard: FC<PropsWithChildren<{ title: string; action?: React.ReactNode 
     {children}
   </Card>
 );
+
+function useRefreshable<T>(load: () => Promise<T>, initial: T) {
+  const [value, setValue] = useState<T>(initial);
+  const [error, setError] = useState<string | null>(null);
+  const [nonce, setNonce] = useState(0);
+  const refresh = useCallback(() => setNonce((n) => n + 1), []);
+
+  useEffect(() => {
+    let cancelled = false;
+    load().then(
+      (next) => { if (!cancelled) { setValue(next); setError(null); } },
+      (err: unknown) => { if (!cancelled) setError(toMessage(err)); },
+    );
+    return () => { cancelled = true; };
+  }, [load, nonce]);
+
+  return { value, error, refresh };
+}
 
 const ContextViewer: FC<{ data: object }> = ({ data }) => (
   <DebugCard title="App Context">
@@ -58,55 +77,39 @@ const TopBarController: FC = () => {
   );
 };
 
-function useRefreshable<T>(load: () => Promise<T>, initial: T) {
-  const [value, setValue] = useState<T>(initial);
-  const [error, setError] = useState<string | null>(null);
-  const [nonce, setNonce] = useState(0);
-  const refresh = useCallback(() => setNonce((n) => n + 1), []);
-
-  useEffect(() => {
-    let cancelled = false;
-    load().then(
-      (next) => { if (!cancelled) { setValue(next); setError(null); } },
-      (err: unknown) => { if (!cancelled) setError(toMessage(err)); },
-    );
-    return () => { cancelled = true; };
-  }, [load, nonce]);
-
-  return { value, error, refresh };
-}
-
-const describePort = (p: PortInfo): string =>
-  [p.manufacturer, p.product, p.serialNumber && `SN:${p.serialNumber}`, `${hex(p.vid)}:${hex(p.pid)}`]
-    .filter(Boolean)
-    .join(" · ");
-
-const describeStoredLabel = (l: StoredLabel): string =>
-  [
-    `baud ${l.baudRate}`,
-    l.path && `path ${l.path}`,
-    l.serialNumber && `SN:${l.serialNumber}`,
-    l.vid !== undefined && `${hex(l.vid)}:${hex(l.pid)}`,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-
-const SerialPortRow: FC<{ label: string }> = ({ label }) => {
-  const { connected, data, error, write, close } = useSerialPort(label);
+const DeviceRow: FC<{ device: SerialDevice; onAssign: () => void; onRemove: () => void }> = ({ device, onAssign, onRemove }) => {
+  const { connected, data, error, write } = useSerialPort(device.key);
   const lastText = data ? new TextDecoder().decode(data).trim() : "";
+
+  const detail = [
+    device.baudRate ? `baud ${device.baudRate}` : "속도 미확정",
+    device.serialNumber && `SN:${device.serialNumber}`,
+    device.vid !== undefined && `${hex(device.vid)}:${hex(device.pid)}`,
+  ].filter(Boolean).join(" · ");
 
   return (
     <ListItem
       secondaryAction={
         <Stack direction="row" spacing={1}>
-          <Button size="small" onClick={() => write(new TextEncoder().encode("PING\r"))}>Send PING</Button>
-          <Button size="small" color="error" onClick={() => void close()}>Close</Button>
+          {connected && (
+            <Button size="small" onClick={() => write(new TextEncoder().encode("PING\r"))}>PING</Button>
+          )}
+          <Button size="small" onClick={onAssign}>{device.label ? "재할당" : "라벨 할당"}</Button>
+          <IconButton size="small" onClick={onRemove}><Delete /></IconButton>
         </Stack>
       }
     >
       <ListItemText
-        primary={`${label} ${connected ? "✓" : "✗"}`}
-        secondary={error ? `Error: ${error.message}` : (lastText || "(no data yet)")}
+        primary={
+          <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+            <span>{device.key}</span>
+            {device.label
+              ? <Chip size="small" color="primary" label={device.label} />
+              : <Chip size="small" variant="outlined" label="미할당" />}
+            <Chip size="small" color={connected ? "success" : "default"} label={connected ? "연결됨" : "연결 안 됨"} />
+          </Stack>
+        }
+        secondary={error ? `Error: ${error.message}` : (lastText || detail)}
       />
     </ListItem>
   );
@@ -114,68 +117,54 @@ const SerialPortRow: FC<{ label: string }> = ({ label }) => {
 
 const SerialDebugCard: FC = () => {
   const { isTauri } = useAppContext();
-  const [, forceTick] = useState(0);
-  useEffect(() => serialManager.onChange(() => forceTick((t) => t + 1)), []);
+  const devices = useSerialDevices();
 
-  const stored = serialManager.getStoredLabels();
-  const connections = useSerialPortList();
-  const loadPorts = useCallback(() => serialManager.listPorts(), []);
+  const loadPorts = useCallback(() => serialManager.listAvailablePorts(), []);
   const { value: ports, error: portsError, refresh } = useRefreshable<PortInfo[]>(loadPorts, EMPTY_PORTS);
 
-  const [formError, setFormError] = useState<string | null>(null);
-  const [session, setSession] = useState<LearningSession | null>(null);
   const [dialogKey, setDialogKey] = useState<string | null>(null);
-  const resolverRef = useRef<{ resolve: () => void; reject: (e: Error) => void } | null>(null);
+  const [target, setTarget] = useState<SerialDevice | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const { control, handleSubmit, reset } = useForm({ defaultValues: { label: "", baudRate: 9600, path: "" } });
+  const registeredKeys = useMemo(() => new Set(devices.map((d) => d.key)), [devices]);
 
-  const onDefine = ({ label, baudRate, path }: { label: string; baudRate: number; path: string }) => {
-    const trimmed = label.trim();
-    if (!trimmed) {
-      setFormError("라벨을 입력하세요.");
-      return;
+  const addDevice = async () => {
+    try {
+      // 웹은 브라우저 선택 창이 곧 등록 절차이고, Tauri 는 시스템 포트 목록에서 고른다.
+      if (isTauri) {
+        refresh();
+        setDialogKey("device");
+        return;
+      }
+      await serialManager.requestDevice();
+      refresh();
+      setError(null);
+    } catch (err) {
+      setError(toMessage(err));
     }
-    // 웹은 학습 세션이 포트를 정하므로 비워 둔다.
-    if (isTauri && !path) {
-      setFormError("데스크톱 환경에서는 연결할 포트를 선택해야 합니다.");
-      return;
-    }
-    const port = ports.find((p) => p.path === path);
-    serialManager.defineLabel(trimmed, {
-      baudRate: Number(baudRate),
-      path: path || undefined,
-      vid: port?.vid,
-      pid: port?.pid,
-      serialNumber: port?.serialNumber,
-    });
-    setFormError(null);
-    reset();
   };
 
-  const handleRestore = async () => {
+  const restore = async () => {
     try {
-      await serialManager.restore({
-        onLearn: (s) => {
-          setSession(s);
-          setDialogKey("learning");
-          return new Promise<void>((resolve, reject) => {
-            resolverRef.current = { resolve, reject };
-          });
-        },
-      });
-      setFormError(null);
+      await serialManager.restore();
+      refresh();
+      setError(null);
     } catch (err) {
-      setFormError(`복원 실패: ${toMessage(err)}`);
-    } finally {
-      setDialogKey(null);
-      setSession(null);
-      resolverRef.current = null;
+      setError(toMessage(err));
+    }
+  };
+
+  const removeDevice = async (device: SerialDevice) => {
+    try {
+      await serialManager.removeDevice(device.key);
+    } catch (err) {
+      setError(toMessage(err));
     }
   };
 
   return (
     <DebugCard
-      title="Serial Ports"
+      title="Serial Devices"
       action={<TooltipIconButton tooltip="포트 다시 검색" icon={Refresh} onClick={refresh} />}
     >
       <Stack spacing={2}>
@@ -184,73 +173,49 @@ const SerialDebugCard: FC = () => {
         </Typography>
 
         {portsError && <Alert severity="warning">포트 목록 조회 실패: {portsError}</Alert>}
-        {formError && <Alert severity="error" onClose={() => setFormError(null)}>{formError}</Alert>}
+        {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
 
-        <Typography variant="subtitle2">감지된 포트 ({ports.length})</Typography>
+        <Stack direction="row" spacing={1}>
+          <Button variant="contained" onClick={() => void addDevice()}>기기 추가</Button>
+          <Button variant="outlined" onClick={() => void restore()}>연결 복원</Button>
+        </Stack>
+
+        <Typography variant="subtitle2">등록된 기기 ({devices.length})</Typography>
         <List dense>
-          {ports.length === 0 && (
+          {devices.length === 0 && (
             <ListItem>
               <ListItemText
-                primary="(감지된 포트 없음)"
-                secondary={isTauri ? undefined : "웹에서는 아래 Restore 로 권한을 먼저 부여해야 목록에 나타납니다."}
+                primary="(등록된 기기 없음)"
+                secondary={isTauri ? "기기 추가로 시스템 포트를 등록하세요." : "기기 추가로 브라우저 권한을 부여하세요."}
               />
             </ListItem>
           )}
-          {ports.map((p) => <ListItem key={p.path}><ListItemText primary={p.path} secondary={describePort(p)} /></ListItem>)}
-        </List>
-
-        <Typography variant="subtitle2">라벨 정의</Typography>
-        <Box component="form" onSubmit={handleSubmit(onDefine)}>
-          <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", gap: 1 }}>
-            <FormTextField name="label" control={control} inputProps={{ label: "Label", size: "small" }} />
-            <FormTextField name="baudRate" control={control} inputProps={{ label: "Baud", size: "small", type: "number" }} />
-            {isTauri && (
-              <FormSelect
-                name="path"
-                control={control}
-                options={ports.map((p) => ({ value: p.path, label: p.path }))}
-                emptyLabel="(감지된 포트 없음)"
-                inputProps={{ label: "Port", size: "small", sx: { minWidth: 200 } }}
-              />
-            )}
-            <Button type="submit" variant="outlined">Define</Button>
-          </Stack>
-        </Box>
-
-        <Typography variant="subtitle2">저장된 라벨</Typography>
-        <List dense>
-          {stored.length === 0 && <ListItem><ListItemText primary="(none defined)" /></ListItem>}
-          {stored.map((l) => (
-            <ListItem
-              key={l.label}
-              secondaryAction={
-                <IconButton size="small" onClick={() => serialManager.removeLabel(l.label)} disabled={serialManager.isOpen(l.label)}>
-                  <Delete />
-                </IconButton>
-              }
-            >
-              <ListItemText primary={l.label} secondary={describeStoredLabel(l)} />
-            </ListItem>
+          {devices.map((device) => (
+            <DeviceRow
+              key={device.key}
+              device={device}
+              onAssign={() => { setTarget(device); setDialogKey("label"); }}
+              onRemove={() => void removeDevice(device)}
+            />
           ))}
-        </List>
-
-        <Button variant="contained" onClick={() => void handleRestore()} disabled={stored.length === 0}>
-          Restore (Connect Scanners)
-        </Button>
-
-        <Typography variant="subtitle2">열린 연결</Typography>
-        <List dense>
-          {connections.length === 0 && <ListItem><ListItemText primary="(none open)" /></ListItem>}
-          {connections.map((c) => <SerialPortRow key={c.label} label={c.label} />)}
         </List>
       </Stack>
 
-      <SerialLearningDialog
-        session={session}
-        dialogKey="learning"
+      <DeviceAddDialog
+        dialogKey="device"
         currentDialogKey={dialogKey}
-        onConfirm={() => resolverRef.current?.resolve()}
-        onCancel={() => resolverRef.current?.reject(new Error("User cancelled"))}
+        ports={ports}
+        registeredKeys={registeredKeys}
+        onAdd={(port) => serialManager.registerDevice(port)}
+        onClose={() => setDialogKey(null)}
+      />
+
+      <LabelAssignDialog
+        dialogKey="label"
+        currentDialogKey={dialogKey}
+        device={target}
+        unassignedLabels={serialManager.listUnassignedLabels()}
+        onClose={() => { setDialogKey(null); setTarget(null); }}
       />
     </DebugCard>
   );

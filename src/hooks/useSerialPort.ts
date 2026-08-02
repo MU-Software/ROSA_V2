@@ -1,10 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import {
-  serialManager,
-  type Connection,
-  type DataListener,
-  type ErrorListener,
-} from "../apis/serial";
+import { serialManager, type SerialDevice } from "../apis/serial";
 
 export type UseSerialPortResult = {
   connected: boolean;
@@ -14,8 +9,8 @@ export type UseSerialPortResult = {
   close: () => Promise<void>;
 };
 
-export function useSerialPort(label: string): UseSerialPortResult {
-  const [connected, setConnected] = useState<boolean>(() => serialManager.isOpen(label));
+export function useSerialPort(key: string): UseSerialPortResult {
+  const [connected, setConnected] = useState(() => serialManager.isOpen(key));
   const [data, setData] = useState<Uint8Array | null>(null);
   const [error, setError] = useState<Error | null>(null);
 
@@ -23,21 +18,14 @@ export function useSerialPort(label: string): UseSerialPortResult {
     let unsubData: (() => void) | undefined;
     let unsubError: (() => void) | undefined;
 
-    const subscribe = () => {
+    const sync = () => {
       unsubData?.();
       unsubError?.();
       unsubData = unsubError = undefined;
-      if (serialManager.isOpen(label)) {
-        const onData: DataListener = (d) => setData(d);
-        const onError: ErrorListener = (e) => setError(e);
-        unsubData = serialManager.onData(label, onData);
-        unsubError = serialManager.onError(label, onError);
-      }
-    };
-
-    const sync = () => {
-      setConnected(serialManager.isOpen(label));
-      subscribe();
+      setConnected(serialManager.isOpen(key));
+      if (!serialManager.isOpen(key)) return;
+      unsubData = serialManager.onData(key, setData);
+      unsubError = serialManager.onError(key, setError);
     };
 
     sync();
@@ -47,16 +35,16 @@ export function useSerialPort(label: string): UseSerialPortResult {
       unsubError?.();
       unsubChange();
     };
-  }, [label]);
+  }, [key]);
 
-  const write = useCallback((bytes: Uint8Array) => serialManager.write(label, bytes), [label]);
-  const close = useCallback(() => serialManager.close(label), [label]);
+  const write = useCallback((bytes: Uint8Array) => serialManager.write(key, bytes), [key]);
+  const close = useCallback(() => serialManager.close(key), [key]);
 
   return { connected, data, error, write, close };
 }
 
-export function useSerialPortList(): Connection[] {
-  const [ports, setPorts] = useState<Connection[]>(() => serialManager.list());
-  useEffect(() => serialManager.onChange(() => setPorts(serialManager.list())), []);
-  return ports;
+export function useSerialDevices(): SerialDevice[] {
+  const [devices, setDevices] = useState<SerialDevice[]>(() => serialManager.listDevices());
+  useEffect(() => serialManager.onChange(() => setDevices(serialManager.listDevices())), []);
+  return devices;
 }
