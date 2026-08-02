@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FC, type PropsW
 import { useForm, useWatch } from "react-hook-form";
 import { createUsbAdapter, type PortInfo, type UsbDeviceInfo } from "../adapters";
 import { serialManager, type LearningSession, type StoredLabel } from "../apis/serial";
-import { supportsTransferableStreams } from "../apis/serialBridge";
+import { usesWorkerBridge } from "../apis/serialBridge";
 import { TooltipIconButton } from "../components/elements/buttons";
 import { FormSelect, FormSwitch, FormTextField } from "../components/elements/forms";
 import { useAppContext, useTopBar } from "../contexts";
@@ -180,7 +180,7 @@ const SerialDebugCard: FC = () => {
     >
       <Stack spacing={2}>
         <Typography variant="caption" color="text.secondary">
-          {isTauri ? "Tauri" : "Web"} · 읽기 루프: {supportsTransferableStreams() ? "Worker" : "메인 스레드(폴백)"}
+          {isTauri ? "Tauri" : "Web"} · 읽기 루프: {isTauri ? "Rust 스레드" : usesWorkerBridge() ? "Worker" : "메인 스레드(폴백)"}
         </Typography>
 
         {portsError && <Alert severity="warning">포트 목록 조회 실패: {portsError}</Alert>}

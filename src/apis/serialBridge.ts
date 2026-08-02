@@ -1,3 +1,4 @@
+import { isTauri } from "../adapters";
 import type { SerialWorkerInbound, SerialWorkerOutbound } from "../workers/serialProtocol";
 
 /** 워커가 cleanup 응답을 주지 않을 때 강제로 진행하기까지의 대기 시간. */
@@ -128,12 +129,15 @@ class InlineSerialBridge implements SerialBridge {
   }
 }
 
+/** Tauri 는 Rust 리더 스레드가 읽기를 전담하고 스트림 소스는 메인 realm 에 남으므로, 워커로 넘기면 메인 → 워커 → 메인 왕복만 늘어난다. */
+export const usesWorkerBridge = (): boolean => !isTauri() && supportsTransferableStreams();
+
 export function createSerialBridge(
   readable: ReadableStream<Uint8Array>,
   writable: WritableStream<Uint8Array>,
   handlers: SerialBridgeHandlers,
 ): SerialBridge {
-  return supportsTransferableStreams()
+  return usesWorkerBridge()
     ? new WorkerSerialBridge(readable, writable, handlers)
     : new InlineSerialBridge(readable, writable, handlers);
 }
