@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 
@@ -49,6 +50,7 @@ struct ClosedEvent {
 struct OpenPort {
     writer: Box<dyn SerialPort>,
     stop: Arc<AtomicBool>,
+    reader: Option<JoinHandle<()>>,
 }
 
 #[derive(Default)]
@@ -113,9 +115,16 @@ pub fn serial_open(
         .map_err(|e| e.to_string())?;
 
     let stop = Arc::new(AtomicBool::new(false));
-    spawn_read_loop(app, path.clone(), reader, stop.clone());
+    let handle = spawn_read_loop(app, path.clone(), reader, stop.clone());
 
-    ports.insert(path, OpenPort { writer, stop });
+    ports.insert(
+        path,
+        OpenPort {
+            writer,
+            stop,
+            reader: Some(handle),
+        },
+    );
     Ok(())
 }
 
@@ -124,7 +133,7 @@ fn spawn_read_loop(
     path: String,
     mut reader: Box<dyn SerialPort>,
     stop: Arc<AtomicBool>,
-) {
+) -> JoinHandle<()> {
     std::thread::spawn(move || {
         let mut buf = vec![0u8; READ_BUFFER_SIZE];
         while !stop.load(Ordering::Relaxed) {
@@ -155,15 +164,21 @@ fn spawn_read_loop(
             }
         }
         let _ = app.emit(CLOSED_EVENT, ClosedEvent { path });
-    });
+    })
 }
 
 #[tauri::command]
 pub fn serial_close(state: State<'_, SerialState>, path: String) -> Result<(), String> {
     let mut ports = state.ports.lock().map_err(|e| e.to_string())?;
-    let entry = ports.remove(&path).ok_or("Port not open")?;
+    let mut entry = ports.remove(&path).ok_or("Port not open")?;
     // 리더는 복제된 핸들을 쓰므로 writer 를 드롭해도 멈추지 않는다.
     entry.stop.store(true, Ordering::Relaxed);
+    drop(ports);
+
+    // 스레드가 fd 를 놓기 전에 재개방하면 배타적 잠금 획득에 실패한다.
+    if let Some(handle) = entry.reader.take() {
+        handle.join().map_err(|_| "Reader thread panicked".to_string())?;
+    }
     Ok(())
 }
 
