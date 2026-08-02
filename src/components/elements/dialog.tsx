@@ -31,7 +31,7 @@ export const PhDialog: FC<CommonDialogProps> = ({
   onClose,
 }) => {
   const props: DialogProps = {
-    maxWidth: size === 'fullWidth' || size === 'fullScreen' ? null : size,
+    maxWidth: size === 'fullWidth' || size === 'fullScreen' ? false : size,
     fullScreen: size === 'fullScreen',
     fullWidth: size === 'fullWidth',
     open: currentDialogKey === dialogKey,

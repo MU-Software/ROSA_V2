@@ -4,8 +4,7 @@ import { isTauri } from "../adapters";
 import type { TopBarInfo } from "../schemas/topBar";
 
 export const CONTEXT_LOCAL_STORAGE_KEY = "appContext";
-const JSONIFY_TARGET_FIELDS = [
-];
+const JSONIFY_TARGET_FIELDS: string[] = [];
 
 export type AppContextType = {
   isTauri: boolean;
