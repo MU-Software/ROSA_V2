@@ -11,7 +11,6 @@ pub fn run() {
             serial::serial_open,
             serial::serial_close,
             serial::serial_write,
-            serial::serial_read,
             usb::usb_list_devices,
         ])
         .run(tauri::generate_context!())

@@ -1,5 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { isTauri } from ".";
+
+/** `src-tauri/src/serial.rs` 의 상수와 반드시 동일해야 한다. */
+const DATA_EVENT = "serial://data";
+const ERROR_EVENT = "serial://error";
+const CLOSED_EVENT = "serial://closed";
 
 export interface PortInfo {
   path: string;
@@ -15,23 +21,23 @@ export interface SerialAdapter {
   listPorts(): Promise<PortInfo[]>;
   open(path: string, baudRate: number): Promise<void>;
   close(path: string): Promise<void>;
-  write(path: string, data: Uint8Array): Promise<number>;
-  read(path: string, size: number): Promise<Uint8Array>;
+  getReadable(path: string): ReadableStream<Uint8Array>;
+  getWritable(path: string): WritableStream<Uint8Array>;
 }
+
+type RustPortInfo = {
+  path: string;
+  port_type: string;
+  manufacturer?: string;
+  product?: string;
+  serial_number?: string;
+  vid?: number;
+  pid?: number;
+};
 
 class TauriSerialAdapter implements SerialAdapter {
   async listPorts(): Promise<PortInfo[]> {
-    const ports = await invoke<
-      {
-        path: string;
-        port_type: string;
-        manufacturer?: string;
-        product?: string;
-        serial_number?: string;
-        vid?: number;
-        pid?: number;
-      }[]
-    >("serial_list_ports");
+    const ports = await invoke<RustPortInfo[]>("serial_list_ports");
     return ports.map((p) => ({
       path: p.path,
       portType: p.port_type,
@@ -51,20 +57,62 @@ class TauriSerialAdapter implements SerialAdapter {
     await invoke("serial_close", { path });
   }
 
-  async write(path: string, data: Uint8Array): Promise<number> {
-    return invoke<number>("serial_write", { path, data: Array.from(data) });
+  getReadable(path: string): ReadableStream<Uint8Array> {
+    let unlisteners: UnlistenFn[] = [];
+    const stopListening = () => {
+      unlisteners.forEach((fn) => fn());
+      unlisteners = [];
+    };
+
+    return new ReadableStream<Uint8Array>({
+      start: async (controller) => {
+        unlisteners = await Promise.all([
+          listen<{ path: string; data: number[] }>(DATA_EVENT, ({ payload }) => {
+            if (payload.path !== path) return;
+            controller.enqueue(new Uint8Array(payload.data));
+          }),
+          listen<{ path: string; message: string }>(ERROR_EVENT, ({ payload }) => {
+            if (payload.path !== path) return;
+            stopListening();
+            controller.error(new Error(payload.message));
+          }),
+          listen<{ path: string }>(CLOSED_EVENT, ({ payload }) => {
+            if (payload.path !== path) return;
+            stopListening();
+            try { controller.close(); } catch { /* 이미 닫힘 */ }
+          }),
+        ]);
+      },
+      cancel: stopListening,
+    });
   }
 
-  async read(path: string, size: number): Promise<Uint8Array> {
-    const arr = await invoke<number[]>("serial_read", { path, size });
-    return new Uint8Array(arr);
+  getWritable(path: string): WritableStream<Uint8Array> {
+    return new WritableStream<Uint8Array>({
+      write: async (chunk) => {
+        await invoke<number>("serial_write", { path, data: Array.from(chunk) });
+      },
+    });
   }
 }
 
-class WebSerialAdapter implements SerialAdapter {
+export class WebSerialAdapter implements SerialAdapter {
   private ports = new Map<string, SerialPort>();
-  private readers = new Map<string, ReadableStreamDefaultReader<Uint8Array>>();
-  private writers = new Map<string, WritableStreamDefaultWriter<Uint8Array>>();
+
+  async acquirePorts(): Promise<SerialPort[]> {
+    const granted = await navigator.serial.getPorts();
+    if (granted.length > 0) return granted;
+    try {
+      return [await navigator.serial.requestPort()];
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "NotFoundError") return [];
+      throw err;
+    }
+  }
+
+  attach(path: string, port: SerialPort): void {
+    this.ports.set(path, port);
+  }
 
   async listPorts(): Promise<PortInfo[]> {
     const ports = await navigator.serial.getPorts();
@@ -80,49 +128,40 @@ class WebSerialAdapter implements SerialAdapter {
   }
 
   async open(path: string, baudRate: number): Promise<void> {
-    const port = await navigator.serial.requestPort();
-    await port.open({ baudRate });
+    const port = this.ports.get(path) ?? (await navigator.serial.requestPort());
+    // readable 이 있으면 학습 세션이 이미 연 포트다.
+    if (!port.readable) await port.open({ baudRate });
     this.ports.set(path, port);
-    if (port.readable) {
-      this.readers.set(path, port.readable.getReader());
-    }
-    if (port.writable) {
-      this.writers.set(path, port.writable.getWriter());
-    }
   }
 
   async close(path: string): Promise<void> {
-    const reader = this.readers.get(path);
-    if (reader) {
-      await reader.cancel();
-      reader.releaseLock();
-      this.readers.delete(path);
-    }
-    const writer = this.writers.get(path);
-    if (writer) {
-      await writer.close();
-      this.writers.delete(path);
-    }
     const port = this.ports.get(path);
-    if (port) {
+    if (!port) return;
+    this.ports.delete(path);
+    try {
       await port.close();
-      this.ports.delete(path);
+    } catch (err) {
+      // 워커로 transfer 된 스트림의 잠금이 남아있을 수 있어 치명적으로 다루지 않는다.
+      console.warn(`Failed to close web serial port "${path}":`, err);
     }
   }
 
-  async write(path: string, data: Uint8Array): Promise<number> {
-    const writer = this.writers.get(path);
-    if (!writer) throw new Error("Port not open");
-    await writer.write(data);
-    return data.length;
+  getReadable(path: string): ReadableStream<Uint8Array> {
+    const port = this.requirePort(path);
+    if (!port.readable) throw new Error(`Port "${path}" has no readable stream`);
+    return port.readable;
   }
 
-  async read(path: string, size: number): Promise<Uint8Array> {
-    const reader = this.readers.get(path);
-    if (!reader) throw new Error("Port not open");
-    const { value } = await reader.read();
-    if (!value) return new Uint8Array(0);
-    return value.slice(0, size);
+  getWritable(path: string): WritableStream<Uint8Array> {
+    const port = this.requirePort(path);
+    if (!port.writable) throw new Error(`Port "${path}" has no writable stream`);
+    return port.writable;
+  }
+
+  private requirePort(path: string): SerialPort {
+    const port = this.ports.get(path);
+    if (!port) throw new Error(`Port "${path}" is not open`);
+    return port;
   }
 }
 
