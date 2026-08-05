@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FC } from "react";
 import { Route, Routes } from "react-router";
+import { serialManager } from "./apis/serial";
 import { TopBar } from "./components/elements/topbar";
 import { AppContext, loadAppConfig, saveAppConfig, type AppContextData } from "./contexts";
 import { DebugPage } from "./pages/debug";
@@ -9,6 +10,10 @@ import { NotFoundPage } from "./pages/notFound";
 export const App: FC = () => {
   const [appState, setAppContext] = useState<AppContextData>(loadAppConfig);
   useEffect(() => { saveAppConfig(appState); }, [appState]);
+
+  useEffect(() => {
+    serialManager.restore().catch((err: unknown) => console.error("Serial restore failed:", err));
+  }, []);
 
   const contextValue = useMemo(() => ({ ...appState, setAppContext }), [appState]);
 

@@ -3,7 +3,7 @@ import { Alert, Button, Card, Chip, Container, IconButton, List, ListItem, ListI
 import { useCallback, useEffect, useMemo, useState, type FC, type PropsWithChildren, type ReactNode } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { createUsbAdapter, type PortInfo, type UsbDeviceInfo } from "../adapters";
-import { serialManager, type SerialDevice } from "../apis/serial";
+import { serialManager, type RestoreFailure, type SerialDevice } from "../apis/serial";
 import { usesWorkerBridge } from "../apis/serialBridge";
 import { TooltipIconButton } from "../components/elements/buttons";
 import { FormSwitch, FormTextField } from "../components/elements/forms";
@@ -125,8 +125,11 @@ const SerialDebugCard: FC = () => {
   const [dialogKey, setDialogKey] = useState<string | null>(null);
   const [target, setTarget] = useState<SerialDevice | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [failures, setFailures] = useState<RestoreFailure[]>([]);
 
   const registeredKeys = useMemo(() => new Set(devices.map((d) => d.key)), [devices]);
+  // devices 가 바뀔 때마다 다시 계산된다.
+  const unassignedLabels = serialManager.listUnassignedLabels();
 
   const addDevice = async () => {
     try {
@@ -144,10 +147,12 @@ const SerialDebugCard: FC = () => {
     }
   };
 
-  const restore = async () => {
+  // 포트 재검색과 연결 복원은 항상 함께 필요하므로 한 동작으로 묶는다.
+  const rescan = async () => {
     try {
-      await serialManager.restore();
+      const { failed } = await serialManager.restore();
       refresh();
+      setFailures(failed);
       setError(null);
     } catch (err) {
       setError(toMessage(err));
@@ -165,7 +170,7 @@ const SerialDebugCard: FC = () => {
   return (
     <DebugCard
       title="Serial Devices"
-      action={<TooltipIconButton tooltip="포트 다시 검색" icon={Refresh} onClick={refresh} />}
+      action={<TooltipIconButton tooltip="다시 검색하고 연결" icon={Refresh} onClick={() => void rescan()} />}
     >
       <Stack spacing={2}>
         <Typography variant="caption" color="text.secondary">
@@ -174,10 +179,16 @@ const SerialDebugCard: FC = () => {
 
         {portsError && <Alert severity="warning">포트 목록 조회 실패: {portsError}</Alert>}
         {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
+        {failures.length > 0 && (
+          <Alert severity="warning" onClose={() => setFailures([])}>
+            <Stack spacing={0.5}>
+              {failures.map((f) => <span key={f.label}><strong>{f.label}</strong>: {f.reason}</span>)}
+            </Stack>
+          </Alert>
+        )}
 
         <Stack direction="row" spacing={1}>
           <Button variant="contained" onClick={() => void addDevice()}>기기 추가</Button>
-          <Button variant="outlined" onClick={() => void restore()}>연결 복원</Button>
         </Stack>
 
         <Typography variant="subtitle2">등록된 기기 ({devices.length})</Typography>
@@ -199,6 +210,17 @@ const SerialDebugCard: FC = () => {
             />
           ))}
         </List>
+
+        {unassignedLabels.length > 0 && (
+          <>
+            <Typography variant="subtitle2">미연결 라벨 ({unassignedLabels.length})</Typography>
+            <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", gap: 1 }}>
+              {unassignedLabels.map((l) => (
+                <Chip key={l} label={l} size="small" variant="outlined" onDelete={() => serialManager.removeLabel(l)} />
+              ))}
+            </Stack>
+          </>
+        )}
       </Stack>
 
       <DeviceAddDialog
@@ -214,7 +236,7 @@ const SerialDebugCard: FC = () => {
         dialogKey="label"
         currentDialogKey={dialogKey}
         device={target}
-        unassignedLabels={serialManager.listUnassignedLabels()}
+        unassignedLabels={unassignedLabels}
         onClose={() => { setDialogKey(null); setTarget(null); }}
       />
     </DebugCard>

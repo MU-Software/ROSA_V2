@@ -2,7 +2,7 @@ import { createSerialAdapter, isTauri, type PortInfo, type SerialAdapter } from 
 import { createSerialBridge, type SerialBridge } from "./serialBridge";
 import { probeBaudRate, type BaudProbeResult } from "./serialScan";
 
-const DEVICE_STORAGE_KEY = "rosa.serial.devices";
+const BINDING_STORAGE_KEY = "rosa.serial.devices";
 const LABEL_STORAGE_KEY = "rosa.serial.labels";
 
 export type DeviceIdentity = {
@@ -26,6 +26,36 @@ export type SerialDevice = DeviceIdentity & {
   framing?: Framing;
 };
 
+/** 다음 실행에서 기기를 다시 찾기 위해 저장하는 라벨 단위 기록. */
+type StoredBinding = DeviceIdentity & {
+  label: string;
+  baudRate: number;
+  framing?: Framing;
+};
+
+export type RestoreFailure = {
+  label: string;
+  reason: string;
+};
+
+export type RestoreResult = {
+  opened: SerialDevice[];
+  /** 포트를 찾았는데 열지 못한 경우. 아예 없는 기기는 실패로 보지 않는다. */
+  failed: RestoreFailure[];
+};
+
+const BUSY_PATTERN = /exclusive lock|access is denied|networkerror|failed to open serial port|busy|in use/i;
+
+/** 브라우저와 serialport 크레이트가 서로 다른 문구를 쓰므로 한 줄로 통일한다. */
+export function describeOpenError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (err instanceof DOMException && err.name === "NetworkError") {
+    return "다른 프로그램이 포트를 사용 중이거나 기기가 응답하지 않습니다";
+  }
+  if (BUSY_PATTERN.test(message)) return "다른 프로그램이 포트를 사용 중입니다";
+  return message;
+}
+
 export type DataListener = (data: Uint8Array) => void;
 export type ErrorListener = (error: Error) => void;
 export type ChangeListener = () => void;
@@ -38,12 +68,6 @@ type ConnectionState = {
   errorListeners: Set<ErrorListener>;
 };
 
-type StoredDevice = DeviceIdentity & {
-  label?: string;
-  baudRate?: number;
-  framing?: Framing;
-};
-
 /** 데스크톱에서 path 는 재연결마다 바뀔 수 있어, 시리얼번호 → vid/pid → path 순으로 찾는다. */
 export function resolveStoredPort(identity: DeviceIdentity, available: PortInfo[]): PortInfo | undefined {
   if (identity.serialNumber) {
@@ -52,18 +76,36 @@ export function resolveStoredPort(identity: DeviceIdentity, available: PortInfo[
   }
   if (identity.vid !== undefined && identity.pid !== undefined) {
     const byIds = available.filter((p) => p.vid === identity.vid && p.pid === identity.pid);
-    // 동일 모델이 여러 대면 구분할 수 없으므로 경로 판단에 맡긴다.
     if (byIds.length === 1) return byIds[0];
   }
   return available.find((p) => p.path === identity.path);
 }
 
+/**
+ * 웹은 vid/pid 밖에 알 수 없어 같은 모델을 구분하지 못한다.
+ * 후보가 정확히 하나일 때만 연결하고, 애매하면 사용자에게 맡긴다.
+ * 잘못 연결되면 조용히 엉뚱한 라벨로 데이터가 쌓이므로 추측하지 않는다.
+ */
+function resolveUniquePort(
+  identity: DeviceIdentity,
+  available: PortInfo[],
+  taken: Set<string>,
+): PortInfo | undefined {
+  if (identity.vid === undefined || identity.pid === undefined) return undefined;
+  const matches = available.filter(
+    (p) => p.vid === identity.vid && p.pid === identity.pid && !taken.has(p.path),
+  );
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
 export class SerialPortManager {
   private readonly adapter: SerialAdapter;
   private devices = new Map<string, SerialDevice>();
+  private bindings: StoredBinding[] = [];
   private knownLabels = new Set<string>();
   private connections = new Map<string, ConnectionState>();
   private changeListeners = new Set<ChangeListener>();
+  private restoring?: Promise<RestoreResult>;
 
   constructor(adapter: SerialAdapter = createSerialAdapter()) {
     this.adapter = adapter;
@@ -80,18 +122,16 @@ export class SerialPortManager {
     } catch (err) {
       console.error("Failed to load serial labels:", err);
     }
-    // 웹은 포트를 다시 식별할 수 없어 기기를 저장하지 않는다.
-    if (!isTauri()) return;
     try {
-      const raw: unknown = JSON.parse(localStorage.getItem(DEVICE_STORAGE_KEY) ?? "[]");
+      const raw: unknown = JSON.parse(localStorage.getItem(BINDING_STORAGE_KEY) ?? "[]");
       if (!Array.isArray(raw)) return;
-      for (const entry of raw) {
-        const device = entry as StoredDevice | null;
-        if (!device || typeof device.path !== "string") continue;
-        this.devices.set(device.path, { ...device, key: device.path });
-      }
+      this.bindings = raw.filter((entry): entry is StoredBinding => {
+        const b = entry as StoredBinding | null;
+        return typeof b?.label === "string" && typeof b.baudRate === "number";
+      });
+      this.bindings.forEach((b) => this.knownLabels.add(b.label));
     } catch (err) {
-      console.error("Failed to load serial devices:", err);
+      console.error("Failed to load serial bindings:", err);
     }
   }
 
@@ -105,15 +145,31 @@ export class SerialPortManager {
     if (typeof legacy === "string") this.knownLabels.add(legacy);
   }
 
+  private collectBindings(): StoredBinding[] {
+    const live: StoredBinding[] = [];
+    for (const d of this.devices.values()) {
+      if (!d.label || !d.baudRate) continue;
+      live.push({
+        label: d.label,
+        baudRate: d.baudRate,
+        framing: d.framing,
+        vid: d.vid,
+        pid: d.pid,
+        serialNumber: d.serialNumber,
+        // 웹의 키는 세션 한정이라 저장해도 다음 실행에서 쓸모가 없다.
+        path: isTauri() ? d.path : undefined,
+      });
+    }
+    const liveLabels = new Set(live.map((b) => b.label));
+    // 이번 세션에 연결되지 않은 기존 기록은 지우지 않는다.
+    return [...live, ...this.bindings.filter((b) => !liveLabels.has(b.label))];
+  }
+
   private persist(): void {
+    this.bindings = this.collectBindings();
     if (typeof localStorage === "undefined") return;
     localStorage.setItem(LABEL_STORAGE_KEY, JSON.stringify([...this.knownLabels]));
-    if (!isTauri()) return;
-    const stored: StoredDevice[] = [...this.devices.values()].map(
-      ({ path, vid, pid, serialNumber, label, baudRate, framing }) =>
-        ({ path, vid, pid, serialNumber, label, baudRate, framing }),
-    );
-    localStorage.setItem(DEVICE_STORAGE_KEY, JSON.stringify(stored));
+    localStorage.setItem(BINDING_STORAGE_KEY, JSON.stringify(this.bindings));
   }
 
   // ---------- 기기 ----------
@@ -136,9 +192,8 @@ export class SerialPortManager {
   }
 
   registerDevice(port: PortInfo): SerialDevice {
-    const existing = this.devices.get(port.path);
     const device: SerialDevice = {
-      ...existing,
+      ...this.devices.get(port.path),
       key: port.path,
       path: port.path,
       vid: port.vid,
@@ -146,7 +201,6 @@ export class SerialPortManager {
       serialNumber: port.serialNumber,
     };
     this.devices.set(device.key, device);
-    this.persist();
     this.notifyChange();
     return device;
   }
@@ -158,8 +212,10 @@ export class SerialPortManager {
   }
 
   async removeDevice(key: string): Promise<void> {
+    const device = this.devices.get(key);
     await this.close(key);
     this.devices.delete(key);
+    if (device?.label) this.bindings = this.bindings.filter((b) => b.label !== device.label);
     this.persist();
     this.notifyChange();
   }
@@ -180,6 +236,7 @@ export class SerialPortManager {
     for (const device of this.devices.values()) {
       if (device.label === label) device.label = undefined;
     }
+    this.bindings = this.bindings.filter((b) => b.label !== label);
     this.persist();
     this.notifyChange();
   }
@@ -201,13 +258,19 @@ export class SerialPortManager {
     if (holder) throw new Error(`"${trimmed}" 은 이미 다른 기기에 할당되어 있습니다`);
 
     await this.close(key);
-    const result = await probeBaudRate(this.adapter, key, opts.signal, opts.onAttempt);
+    let result: BaudProbeResult | null;
+    try {
+      result = await probeBaudRate(this.adapter, key, opts.signal, opts.onAttempt);
+    } catch (err) {
+      throw new Error(describeOpenError(err), { cause: err });
+    }
     if (!result) return null;
 
     device.label = trimmed;
     device.baudRate = result.baudRate;
     device.framing = { prefix: result.match.prefix, suffix: result.match.suffix };
     this.knownLabels.add(trimmed);
+    this.bindings = this.bindings.filter((b) => b.label !== trimmed);
     this.persist();
     this.notifyChange();
 
@@ -231,7 +294,11 @@ export class SerialPortManager {
     const baudRate = device.baudRate;
     if (!baudRate) throw new Error(`기기 "${key}" 의 통신 속도가 아직 정해지지 않았습니다`);
 
-    await this.adapter.open(key, baudRate);
+    try {
+      await this.adapter.open(key, baudRate);
+    } catch (err) {
+      throw new Error(describeOpenError(err), { cause: err });
+    }
 
     const state: ConnectionState = {
       key,
@@ -241,10 +308,24 @@ export class SerialPortManager {
       bridge: createSerialBridge(this.adapter.getReadable(key), this.adapter.getWritable(key), {
         onData: (data) => this.connections.get(key)?.dataListeners.forEach((fn) => fn(data)),
         onError: (error) => this.connections.get(key)?.errorListeners.forEach((fn) => fn(error)),
+        onClose: () => void this.handleDisconnect(key),
       }),
     };
     this.connections.set(key, state);
     this.notifyChange();
+  }
+
+  /** 기기 쪽에서 끊긴 연결을 정리한다. 남겨두면 상태 표시가 계속 "연결됨"이 된다. */
+  private async handleDisconnect(key: string): Promise<void> {
+    const state = this.connections.get(key);
+    if (!state) return;
+    this.connections.delete(key);
+    this.notifyChange();
+
+    await state.bridge.dispose();
+    try { await this.adapter.close(key); } catch { /* 이미 닫힘 */ }
+    state.dataListeners.clear();
+    state.errorListeners.clear();
   }
 
   async close(key: string): Promise<void> {
@@ -269,47 +350,46 @@ export class SerialPortManager {
     await Promise.all(this.listConnections().map((key) => this.close(key)));
   }
 
-  /**
-   * 웹: 권한이 남아 있는 포트를 기기로 다시 등록한다. 라벨은 재할당이 필요하다.
-   * Tauri: 저장된 식별자로 경로를 찾아 라벨이 있는 기기를 바로 연결한다.
-   */
-  async restore(): Promise<SerialDevice[]> {
+  /** 앱 시작 시와 수동 재시도에서 함께 호출되므로 동시 실행을 합친다. */
+  async restore(): Promise<RestoreResult> {
+    this.restoring ??= this.runRestore().finally(() => { this.restoring = undefined; });
+    return this.restoring;
+  }
+
+  private async runRestore(): Promise<RestoreResult> {
     const available = await this.adapter.listPorts();
+    // 웹에서는 권한이 부여된 포트가 곧 등록된 기기다.
+    if (!isTauri()) available.forEach((port) => this.registerDevice(port));
 
-    if (!isTauri()) {
-      available.forEach((port) => this.registerDevice(port));
-      return this.listDevices();
-    }
-
+    const taken = new Set(this.listDevices().filter((d) => d.label).map((d) => d.key));
     const opened: SerialDevice[] = [];
-    for (const device of this.listDevices()) {
-      if (!device.label || !device.baudRate || this.isOpen(device.key)) continue;
-      const port = resolveStoredPort(device, available);
-      if (!port) {
-        console.warn(`No matching port found for device "${device.key}"`);
-        continue;
-      }
+    const failed: RestoreFailure[] = [];
+
+    for (const binding of this.bindings) {
+      if (this.findByLabel(binding.label)) continue;
+      const port = isTauri()
+        ? resolveStoredPort(binding, available)
+        : resolveUniquePort(binding, available, taken);
+      // 기기가 아예 없는 경우는 정상이므로 실패로 보고하지 않는다.
+      if (!port) continue;
+
+      const device = this.registerDevice(port);
+      device.label = binding.label;
+      device.baudRate = binding.baudRate;
+      device.framing = binding.framing;
+      taken.add(device.key);
+
       try {
-        if (port.path !== device.key) this.rekey(device, port);
         await this.open(device.key);
         opened.push(device);
       } catch (err) {
-        console.error(`Failed to restore "${device.label}":`, err);
+        failed.push({ label: binding.label, reason: describeOpenError(err) });
       }
     }
-    this.persist();
-    return opened;
-  }
 
-  /** 경로가 바뀐 기기를 새 경로로 옮긴다. */
-  private rekey(device: SerialDevice, port: PortInfo): void {
-    this.devices.delete(device.key);
-    device.key = port.path;
-    device.path = port.path;
-    device.vid = port.vid ?? device.vid;
-    device.pid = port.pid ?? device.pid;
-    device.serialNumber = port.serialNumber ?? device.serialNumber;
-    this.devices.set(device.key, device);
+    this.persist();
+    this.notifyChange();
+    return { opened, failed };
   }
 
   // ---------- I/O ----------

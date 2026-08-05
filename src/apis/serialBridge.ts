@@ -8,6 +8,8 @@ const CLEANUP_TIMEOUT_MS = 1000;
 export type SerialBridgeHandlers = {
   onData: (data: Uint8Array) => void;
   onError: (error: Error) => void;
+  /** 기기 쪽에서 스트림이 끊겼다. dispose() 로 인한 종료에서는 부르지 않는다. */
+  onClose: () => void;
 };
 
 export interface SerialBridge {
@@ -55,6 +57,9 @@ class WorkerSerialBridge implements SerialBridge {
           handlers.onError(
             new Error(msg.payload.cause ? `${msg.payload.message}: ${msg.payload.cause}` : msg.payload.message),
           );
+          break;
+        case "closed":
+          handlers.onClose();
           break;
         case "cleanup_complete":
           this.cleanupResolver?.();
@@ -114,6 +119,7 @@ class InlineSerialBridge implements SerialBridge {
     } catch (err) {
       if (!this.disposed) this.handlers.onError(toError(err));
     }
+    if (!this.disposed) this.handlers.onClose();
   }
 
   write(data: Uint8Array): void {

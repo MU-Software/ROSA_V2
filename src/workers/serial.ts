@@ -78,6 +78,7 @@ class SerialWorkerBridge {
     } catch (err) {
       if (!this.aborted) this.postError("Read loop error", err);
     }
+    if (!this.aborted) this.post({ type: "closed" });
   }
 
   private post(msg: SerialWorkerOutbound): void {
