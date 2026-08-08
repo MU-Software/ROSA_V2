@@ -27,3 +27,11 @@ dist-ssr
 src-tauri/target/
 src-tauri/gen/schemas
 src-tauri/gen/android/**/.kotlin/
+
+# xcodegen 이 project.yml 에서 매번 새로 만든다. 실행할 때마다 내부 UUID 가 바뀌어
+# 내용이 같아도 diff 가 난다. 클린 체크아웃은 `pnpm tauri ios init` 으로 만든다.
+src-tauri/gen/apple/rosa.xcodeproj/
+
+# `tauri ios init` 이 src-tauri/icons/ 에서 다시 만드는 파생 크기들. 카탈로그가
+# 참조하는 것은 AppIcon.png 하나뿐이라 이것들은 고아로 남는다.
+src-tauri/gen/apple/Assets.xcassets/AppIcon.appiconset/AppIcon-*.png

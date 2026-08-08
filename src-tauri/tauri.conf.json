@@ -38,7 +38,8 @@
       "entitlements": "Entitlements.plist"
     },
     "iOS": {
-      "infoPlist": "Info.plist"
+      "infoPlist": "Info.plist",
+      "developmentTeam": "NBM824WDPS"
     }
   }
 }
