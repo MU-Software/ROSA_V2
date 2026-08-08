@@ -1,5 +1,5 @@
 import * as React from "react";
-import { isTauri } from "../adapters";
+import { isTauri } from "../utils/platform";
 import type { TopBarInfo } from "../schemas/topBar";
 
 export const CONTEXT_LOCAL_STORAGE_KEY = "appContext";

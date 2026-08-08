@@ -1,4 +1,4 @@
-import { isTauri } from "../adapters";
+import { isTauri } from "../utils/platform";
 import type { SerialWorkerInbound, SerialWorkerOutbound } from "../workers/serialProtocol";
 
 /** 워커가 cleanup 응답을 주지 않을 때 강제로 진행하기까지의 대기 시간. */

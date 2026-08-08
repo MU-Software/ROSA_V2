@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { isTauri } from ".";
+import { isTauri } from "../utils/platform";
 
 /** `src-tauri/src/serial.rs` 의 상수와 반드시 동일해야 한다. */
 const DATA_EVENT = "serial://data";

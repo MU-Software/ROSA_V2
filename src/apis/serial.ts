@@ -1,4 +1,5 @@
-import { createSerialAdapter, isTauri, type PortInfo, type SerialAdapter } from "../adapters";
+import { createSerialAdapter, type PortInfo, type SerialAdapter } from "../adapters";
+import { isTauri } from "../utils/platform";
 import { createSerialBridge, type SerialBridge } from "./serialBridge";
 import { probeBaudRate, type BaudProbeResult } from "./serialScan";
 
