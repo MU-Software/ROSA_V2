@@ -7,7 +7,21 @@ import type { DeviceSession, DeviceTransport, DiscoveredDevice } from "./device"
 
 // ---------- Android Bluetooth SPP ----------
 
-type SppDevice = { address: string; name: string; deviceClass: number; isImaging: boolean; isBonded?: boolean };
+/** 플러그인 기본값과 같다. 주변 검색은 오래 걸린다. */
+const SPP_DISCOVER_MS = 12_000;
+
+/** `BluetoothDevice.DEVICE_TYPE_*`. `UNKNOWN` 은 조회가 끝나지 않았다는 뜻이다. */
+const DEVICE_TYPE = { UNKNOWN: 0, CLASSIC: 1, LE: 2, DUAL: 3 } as const;
+
+type SppDevice = {
+  address: string;
+  name: string;
+  deviceClass: number;
+  isImaging: boolean;
+  isBonded?: boolean;
+  /** `BluetoothDevice.DEVICE_TYPE_*`. 듀얼 모드 기기는 LE 항목으로도 잡힌다. */
+  type?: number;
+};
 
 class SppTransport implements DeviceTransport {
   readonly kind = "btspp" as const;
@@ -28,6 +42,37 @@ class SppTransport implements DeviceTransport {
       name: device.name,
       address: device.address,
     }));
+  }
+
+  /**
+   * 주변을 검색해 아직 본딩되지 않은 프린터를 페어링한다.
+   *
+   * `list_devices` 는 **본딩된 기기만** 보므로, 이것 없이는 설정 앱에서 먼저 페어링해야
+   * 목록에 나타난다. 페어링 자체는 시스템 대화상자가 뜨므로 사용자가 확인한다.
+   */
+  async request(filter?: DiscoveryFilter): Promise<DiscoveredDevice | null> {
+    if (!(await this.ensurePermission())) throw new Error("블루투스 권한이 거부되었습니다");
+
+    const patterns = filter?.sppNamePatterns;
+
+    // 이름이 맞는 classic 기기를 찾으면 플러그인이 즉시 끊는다 — 안 그러면 12 초를 다 채운다.
+    const { devices } = await invoke<{ devices: SppDevice[] }>("plugin:bluetooth-spp|discover", {
+      timeoutMs: SPP_DISCOVER_MS,
+      stopOnNames: patterns?.map((p) => p.source),
+    });
+
+    const known = (device: SppDevice) =>
+      patterns && patterns.length > 0 ? patterns.some((p) => p.test(device.name)) : device.isImaging;
+
+    // 듀얼 모드 프린터는 classic 과 LE 로 두 번 잡힌다. LE 주소로는 RFCOMM 본딩이 실패한다.
+    // UNKNOWN 은 버리지 않고 뒤로 미룬다 — 타입 조회가 늦었을 뿐 열리는 기기일 수 있다.
+    const classic = (d: SppDevice) => d.type === DEVICE_TYPE.CLASSIC || d.type === DEVICE_TYPE.DUAL;
+    const candidates = devices.filter((d) => known(d) && d.type !== DEVICE_TYPE.LE);
+    const target = candidates.find((d) => d.isBonded) ?? candidates.find(classic) ?? candidates[0];
+    if (!target) return null;
+
+    if (!target.isBonded) await invoke("plugin:bluetooth-spp|pair", { address: target.address });
+    return { key: target.address, transport: this.kind, name: target.name, address: target.address };
   }
 
   async open(key: string, link: LinkSpec): Promise<DeviceSession> {

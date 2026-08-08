@@ -4060,7 +4060,7 @@ dependencies = [
 [[package]]
 name = "tauri-plugin-bluetooth-spp"
 version = "0.1.0"
-source = "git+https://github.com/MU-Software/tauri-plugin-bluetooth-spp?rev=618d8cc323d3b8c9a45c4daa9bcd109d577730b7#618d8cc323d3b8c9a45c4daa9bcd109d577730b7"
+source = "git+https://github.com/MU-Software/tauri-plugin-bluetooth-spp?rev=d2fc1eba33e90aabc3af2c65ff98fd7d634e3c95#d2fc1eba33e90aabc3af2c65ff98fd7d634e3c95"
 dependencies = [
  "tauri",
  "tauri-plugin",

@@ -170,6 +170,34 @@ export const PrinterDebugCard: FC = () => {
   const loadPrinters = useCallback(() => printerManager.refresh(), []);
   const { error, loading, refresh } = useRefreshable<PrinterDevice[]>(loadPrinters, EMPTY_PRINTERS);
   const [requestError, setRequestError] = useState<string | null>(null);
+  const [adding, setAdding] = useState<"검색" | "연결" | null>(null);
+
+  /**
+   * WebUSB 는 브라우저 선택 창이, SPP 는 주변 검색과 페어링이 여기서 일어난다.
+   *
+   * 끝나면 **바로 연결한다.** 사용자가 기기 하나를 고른 것이므로 "이 프린터를 쓰겠다"
+   * 는 뜻이고, 버튼을 한 번 더 누를 이유가 없다. (목록을 훑는 새로고침은 그렇지 않아
+   * 자동으로 붙이지 않는다.)
+   */
+  const addDevice = async () => {
+    setRequestError(null);
+    setAdding("검색");
+    try {
+      const added = await printerManager.requestDevice();
+      if (!added) {
+        setRequestError("새로 붙일 프린터를 찾지 못했습니다");
+        return;
+      }
+      refresh();
+      setAdding("연결");
+      await printerManager.connect(added.key);
+    } catch (err) {
+      // 기기는 목록에 남으므로 연결만 다시 눌러 볼 수 있다.
+      setRequestError(toMessage(err));
+    } finally {
+      setAdding(null);
+    }
+  };
 
   return (
     <DebugCard
@@ -182,11 +210,8 @@ export const PrinterDebugCard: FC = () => {
         {error && <Alert severity="warning">프린터 검색 실패: {error}</Alert>}
         {requestError && <Alert severity="error" onClose={() => setRequestError(null)}>{requestError}</Alert>}
         {printerManager.canRequestDevice() && (
-          <Button
-            variant="outlined"
-            onClick={() => void printerManager.requestDevice().catch((err: unknown) => setRequestError(toMessage(err)))}
-          >
-            프린터 권한 요청
+          <Button variant="outlined" disabled={adding !== null} onClick={() => void addDevice()}>
+            {adding ? `${adding} 중…` : "프린터 추가"}
           </Button>
         )}
         {loading && (

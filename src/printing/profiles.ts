@@ -479,10 +479,13 @@ export const findProfile = (device: DeviceIdentity): PrinterProfile | undefined 
 export type DiscoveryFilter = {
   usbMatches?: UsbMatch[];
   bleServices?: string[];
+  /** SPP 는 주소가 아니라 광고 이름으로 가른다. */
+  sppNamePatterns?: RegExp[];
 };
 
 /** 프로파일에 등록된 기종만 찾는 조건. 인자 없이 `list()` 를 부르면 전부 보인다. */
 export const knownPrinterFilter = (): DiscoveryFilter => ({
   usbMatches: PRINTER_PROFILES.flatMap((profile) => profile.links.usb?.matches ?? []),
   bleServices: PRINTER_PROFILES.map((profile) => profile.links.ble?.service).filter((s): s is string => !!s),
+  sppNamePatterns: PRINTER_PROFILES.map((p) => p.links.btspp?.namePattern).filter((r): r is RegExp => !!r),
 });
