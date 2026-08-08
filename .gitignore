@@ -26,3 +26,4 @@ dist-ssr
 # Tauri / Cargo
 src-tauri/target/
 src-tauri/gen/schemas
+src-tauri/gen/android/**/.kotlin/

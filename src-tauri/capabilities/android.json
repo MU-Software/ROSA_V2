@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/android-schema.json",
+  "identifier": "android",
+  "description": "Android 는 Bluetooth Classic SPP 로 프린터에 붙는다",
+  "platforms": [
+    "android"
+  ],
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "bluetooth-spp:default"
+  ]
+}

@@ -23,6 +23,14 @@ serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.10.3", features = [] }
 tauri-plugin-log = "2"
-serialport = "4"
-rusb = "0.9"
 tokio = { version = "1", features = ["sync", "macros"] }
+
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+rusb = "0.9"
+serialport = "4"
+
+[target.'cfg(target_os = "android")'.dependencies]
+tauri-plugin-bluetooth-spp = { git = "https://github.com/MU-Software/tauri-plugin-bluetooth-spp", rev = "618d8cc323d3b8c9a45c4daa9bcd109d577730b7" }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+tauri-plugin-blec = "0.12"

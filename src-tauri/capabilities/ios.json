@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/iOS-schema.json",
+  "identifier": "ios",
+  "description": "iOS 는 Classic SPP 가 막혀 있어 BLE 로 붙는다",
+  "platforms": [
+    "iOS"
+  ],
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "blec:default"
+  ]
+}

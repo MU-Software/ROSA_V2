@@ -1,6 +1,3 @@
-export const isTauri = (): boolean =>
-  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-
 export {
   isCameraSupported,
   listCameras,
@@ -10,4 +7,4 @@ export {
   type CameraStartOptions,
 } from "./camera";
 export { createSerialAdapter, WebSerialAdapter, type PortInfo, type SerialAdapter } from "./serial";
-export { createUsbAdapter, type UsbAdapter, type UsbDeviceInfo } from "./usb";
+export { USB_CLASS_PRINTER, createUsbAdapter, hasUsbClass, matchesUsbSearch, type UsbAdapter, type UsbDeviceInfo } from "./usb";
