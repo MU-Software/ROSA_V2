@@ -91,15 +91,24 @@ export type PrinterAction = {
   run(io: ByteStream): Promise<string>;
 };
 
-/**
- * 인쇄 중인 프린터는 응답하지 않고 그 질의를 큐에 쌓지도 않고 버린다. 한 번 보내고
- * 기다리면 영원히 오지 않으므로 주기적으로 다시 보내야 하고, 응답이 오는 순간이 곧 완료다.
- */
 export type CompletionProbe = {
   request: Uint8Array;
   length: number;
   /** 다시 물어보기까지의 간격이자 한 번의 응답을 기다리는 시간. */
   intervalMs: number;
+  /**
+   * 응답으로 완료를 판정하는 함수를 만든다. 없으면 **응답이 온 것 자체**를 완료로 본다.
+   *
+   * 세 기종이 셋 다 다르다. PT-390 은 인쇄 중 질의를 버리고 답하지 않아 응답 자체가
+   * 완료 신호다. SL43 은 인쇄 중에도 답하되 상태 바이트에 인쇄 중 비트를 세운다.
+   * Brother 는 인쇄 중에는 침묵하지만 잡 직후 "인쇄 시작" 알림을 한 번 보내므로,
+   * 그 알림을 완료로 오인하지 않으려면 응답을 읽어야 한다.
+   *
+   * 잡마다 새로 불리므로 판정기가 상태를 들어도 되지만, **지금 온 응답만 보고 판정하는
+   * 편이 안전하다** — "인쇄 중을 본 적 있는가" 로 판정하면 그 한 번을 놓쳤을 때 완료
+   * 응답이 와도 타임아웃까지 기다리게 된다.
+   */
+  createJudge?(): (reply: Uint8Array) => Promise<boolean> | boolean;
 };
 
 export type PrinterProfile = {
@@ -170,12 +179,49 @@ const BROTHER_MEDIA_LABELS: Record<number, string> = {
   [RCPT.BROTHER_MEDIA_DIE_CUT]: "다이컷",
 };
 
+/**
+ * `phaseType` 의 인쇄 중 값. receipet 헤더가 주석으로만 적어 둔 값이라 매크로가 없어
+ * 생성 상수에 들어오지 않는다.
+ */
+const BROTHER_PHASE_PRINTING = 0x01;
+
+/**
+ * 인쇄가 끝났는가. 실측(38 × 90 다이컷, 92,402 B):
+ *
+ * ```
+ * 0.00s  잡 전송 완료
+ * 0.00s  statusType 06 phaseType 01   ← 묻지 않아도 오는 "인쇄 시작" 알림
+ * 0.50s ~ 1.26s  무응답               ← 인쇄 중에는 ESC i S 에 답하지 않는다
+ * 1.39s  statusType 00 phaseType 00   ← 완료
+ * ```
+ *
+ * 상태를 들지 않는 이유: "인쇄 중을 본 적 있는가" 로 판정하면 맨 앞의 알림을 놓쳤을 때
+ * 완료 응답이 와도 영원히 기다린다. 지금 온 응답만 보면 그 함정이 없다.
+ */
+const brotherFinished = async (reply: Uint8Array): Promise<boolean> => {
+  const status = await parseBrotherStatus(reply);
+
+  // 용지 없음·커버 열림 등은 기다려도 안 끝난다. 타임아웃까지 끌지 않고 알린다.
+  const problems = describeBrotherErrors(status.errors);
+  if (problems.length > 0) throw new Error(`Brother 가 인쇄를 멈췄습니다: ${problems.join(", ")}`);
+
+  return status.phaseType !== BROTHER_PHASE_PRINTING;
+};
+
 export const BROTHER_QL_820NWB: PrinterProfile = {
   id: "brother-ql-820nwb",
   name: "Brother QL-820NWB",
   links: { usb: { matches: [{ vendorId: 0x04f9, productId: 0x209d }], chunkBytes: 16384 } },
   headDots: BROTHER_HEAD_DOTS,
   dotsPerMm: BROTHER_DOTS_PER_MM,
+
+  // 인쇄 중에는 무응답이지만, 잡 직후 "인쇄 시작" 알림이 한 번 오므로 응답을 읽어야 한다.
+  completionProbe: {
+    request: RCPT.BROTHER_STATUS_REQUEST,
+    length: RCPT.BROTHER_STATUS_LEN,
+    intervalMs: 250,
+    createJudge: () => brotherFinished,
+  },
 
   async probe(io) {
     await io.write(RCPT.BROTHER_STATUS_REQUEST);
@@ -226,13 +272,65 @@ export const BROTHER_QL_820NWB: PrinterProfile = {
 
 // ---------- HPRT SL43 (TSPL) ----------
 
+/** TSPL 상태 바이트의 인쇄 중 비트. */
+const TSPL_STATUS_PRINTING = 0x20;
+
 export const HPRT_SL43: PrinterProfile = {
   id: "hprt-sl43",
   name: "HPRT SL43",
   links: { usb: { matches: [{ vendorId: 0x2aaf, productId: 0x9006 }], chunkBytes: 4096 } },
   // headDots 없음: 헤드 폭 미실측이고, TSPL 은 SIZE 가 인쇄 영역을 정한다.
-  // probe 없음: 상태 질의에 거의 응답하지 않는다.
   dotsPerMm: 8,
+
+  /**
+   * `ESC !?` 만 답한다 (`GS a 0`·`ESC v`·`~!@` 는 무응답). PT-390 과 같은 질의지만
+   * **성질이 다르다 — 인쇄 중에도 답한다.** 실측(40 × 30 mm, 9,684 B):
+   *
+   * ```
+   * 0.00s  잡 전송 완료
+   * 0.09s  → 20   ← 인쇄 중
+   * 0.25s  → 20
+   * 0.52s  → 00   ← 완료
+   * ```
+   *
+   * 그래서 "응답이 왔다" 로는 안 되고 비트를 읽어야 한다.
+   */
+  completionProbe: {
+    request: HEALTH_REQUEST,
+    length: HEALTH_LENGTH,
+    intervalMs: 250,
+    createJudge: () => (reply) => (reply[0] & TSPL_STATUS_PRINTING) === 0,
+  },
+
+  actions: [
+    {
+      id: "probe-status-commands",
+      label: "상태 응답 확인",
+      description:
+        "TSPL 상태 질의에 이 기기가 답하는지 하나씩 시험합니다. 라벨을 쓰지 않습니다. " +
+        "응답하는 질의가 있으면 인쇄 완료 감지에 쓸 수 있습니다.",
+      async run(io) {
+        const attempts: [string, Uint8Array, number][] = [
+          ["ESC !?", HEALTH_REQUEST, HEALTH_LENGTH],
+          ["GS a 0", ASB_REQUEST, ASB_LENGTH],
+          ["ESC v", ascii("\x1bv"), 1],
+          ["~!@", ascii("~!@\r\n"), 1],
+        ];
+
+        const lines: string[] = [];
+        for (const [name, request, length] of attempts) {
+          try {
+            await io.write(request);
+            const reply = await io.read(length, 700);
+            lines.push(`${name} → ${[...reply].map((b) => b.toString(16).padStart(2, "0")).join(" ")}`);
+          } catch {
+            lines.push(`${name} → 무응답`);
+          }
+        }
+        return lines.join(" · ");
+      },
+    },
+  ],
 
   buildJob({ image, copies, label }) {
     if (!label) throw new Error("SL43 은 라벨 크기를 지정해야 합니다");

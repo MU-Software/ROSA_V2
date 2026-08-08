@@ -300,13 +300,14 @@ export class PrinterManager {
     probe: CompletionProbe,
     timeoutMs: number,
   ): Promise<void> {
+    const judge = probe.createJudge?.();
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const asked = Date.now();
       try {
         await connection.session.write(probe.request);
-        await connection.session.read(probe.length, probe.intervalMs);
-        return;
+        const reply = await connection.session.read(probe.length, probe.intervalMs);
+        if (!judge || (await judge(reply))) return;
       } catch (err) {
         // 무응답 = 아직 인쇄 중. 그 밖의 실패는 다시 물어도 소용없다.
         if (!isTimeout(err)) throw err;
