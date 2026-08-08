@@ -10,6 +10,8 @@ import type { DeviceSession, DeviceTransport, DiscoveredDevice } from "./device"
 /** 플러그인 기본값과 같다. 주변 검색은 오래 걸린다. */
 const SPP_DISCOVER_MS = 12_000;
 
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 /** `BluetoothDevice.DEVICE_TYPE_*`. `UNKNOWN` 은 조회가 끝나지 않았다는 뜻이다. */
 const DEVICE_TYPE = { UNKNOWN: 0, CLASSIC: 1, LE: 2, DUAL: 3 } as const;
 
@@ -170,7 +172,7 @@ class BleTransport implements DeviceTransport {
       this.inbox.push(...data);
     });
 
-    // iOS 는 연결할 때 알아서 협상하지만 blec 이 그 값을 못 읽고 기본값을 돌려준다.
+    // iOS 는 연결할 때 알아서 협상하지만 blec 이 그 값을 못 읽고 기본값을 돌려주기도 한다.
     // 그대로 믿으면 20 B 씩 쓰게 되어 8 배 느려지므로 프로파일의 실측값으로 간다.
     let mtu = BLE_DEFAULT_MTU;
     try {
@@ -179,15 +181,29 @@ class BleTransport implements DeviceTransport {
       /* 못 읽으면 프로파일 값으로 간다 */
     }
     const negotiated = mtu > BLE_DEFAULT_MTU;
-    const chunk = negotiated ? mtu - BLE_ATT_OVERHEAD : ble.chunkBytes;
+
+    // **프로파일 값을 넘기지 않는다.** 협상 MTU 보다 큰 쓰기를 걸면 주변장치가 뒷부분을
+    // 말없이 버려서, 래스터가 어긋나고 남은 꼬리가 명령으로 인쇄된다. 보고된 MTU 를
+    // 그대로 믿을 수 없으므로 실측으로 확인된 값을 상한으로 쓴다.
+    const chunk = Math.min(negotiated ? mtu - BLE_ATT_OVERHEAD : ble.chunkBytes, ble.chunkBytes);
 
     return {
-      describe: `청크 ${chunk} B (${negotiated ? `MTU ${mtu}` : "MTU 미보고 — 프로파일 값"})`,
+      describe: `청크 ${chunk} B (MTU ${negotiated ? mtu : "미보고"}, 상한 ${ble.chunkBytes})`,
 
       write: async (data) => {
+        let sincePause = 0;
         for (let at = 0; at < data.length; at += chunk) {
+          const part = data.subarray(at, at + chunk);
           // withoutResponse 는 호스트 큐에만 쌓여 전송 완료 시점을 알 수 없다.
-          await blec.send(ble.writeCharacteristic, [...data.subarray(at, at + chunk)], "withResponse", ble.service);
+          await blec.send(ble.writeCharacteristic, [...part], "withResponse", ble.service);
+
+          // ACK 는 스택이 받았다는 뜻일 뿐이라, 펌웨어 버퍼가 넘치는 것은 못 막는다.
+          if (!ble.pace) continue;
+          sincePause += part.length;
+          if (sincePause >= ble.pace.bytes) {
+            await delay(ble.pace.pauseMs);
+            sincePause = 0;
+          }
         }
       },
 
@@ -197,7 +213,7 @@ class BleTransport implements DeviceTransport {
           if (Date.now() >= deadline) {
             throw new Error(`BLE 읽기가 시간을 초과했습니다: ${this.inbox.length} / ${length} B`);
           }
-          await new Promise((resolve) => setTimeout(resolve, 10));
+          await delay(10);
         }
         return Uint8Array.from(this.inbox.splice(0, length));
       },

@@ -29,6 +29,13 @@ export type BleLink = {
   notifyCharacteristic: string;
   /** MTU 를 알아낼 수 없을 때 쓴다. 실측 최적값이며 협상 MTU 를 넘기면 오히려 느려진다. */
   chunkBytes: number;
+  /**
+   * `bytes` 만큼 보낼 때마다 `pauseMs` 쉰다. 없으면 쉬지 않는다.
+   *
+   * GATT 수신 버퍼는 유한한데 **넘치면 조용히 버린다.** 오류도 나지 않아, 래스터가
+   * 중간부터 어긋나고 남은 꼬리가 글자로 인쇄된다.
+   */
+  pace?: { bytes: number; pauseMs: number };
 };
 
 export type LinkSpec = UsbLink | SppLink | BleLink;
@@ -361,6 +368,9 @@ export const GOOJPRT_PT390: PrinterProfile = {
       writeCharacteristic: "00002af1-0000-1000-8000-00805f9b34fb",
       notifyCharacteristic: "00002af0-0000-1000-8000-00805f9b34fb",
       chunkBytes: 182,
+      // 실측: 23,055 B 는 통과하고 34,575 B 는 32 KB 지점(래스터 454 행)부터 깨졌다.
+      // 8 KB 마다 300 ms 쉬면 온전히 나온다. 34.5 KB 잡 기준 2.9 초 → 4.2 초.
+      pace: { bytes: 8192, pauseMs: 300 },
     },
   },
   headDots: PT390_MAX_DOTS,
