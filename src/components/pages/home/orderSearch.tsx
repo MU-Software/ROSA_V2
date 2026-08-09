@@ -23,10 +23,12 @@ import {
 } from "@mui/material";
 import { useMutation } from "@tanstack/react-query";
 import { useState, type FC, type FormEvent, type ReactNode } from "react";
+import { useAppContext } from "../../../contexts";
 import {
   canFullyRefundOrder,
   canTransitionOrderProductStatus,
   getPaidOptionExchangeTargets,
+  transitionRegistration,
   type EntityId,
   type Order,
   type OrderProductRelation,
@@ -83,23 +85,49 @@ export const OrderSearchWorkspace: FC<{
   gateway: RegistrationDeskGateway | null;
   children: ReactNode;
   onRegistrationChanged: () => void;
-  onProductSelected: () => void;
-  onProductClosed: () => void;
 }> = ({
   gateway,
   children,
   onRegistrationChanged,
-  onProductSelected,
-  onProductClosed,
 }) => {
+  const {
+    order_product_relation: restoredProduct,
+    setAppContext,
+  } = useAppContext();
   const [query, setQuery] = useState("");
   const [orders, setOrders] = useState<Order[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
-  const [selectedProductId, setSelectedProductId] = useState<EntityId | null>(null);
+  const [selectedProductId, setSelectedProductId] = useState<EntityId | null>(restoredProduct?.id ?? null);
+  const updateRegistrationProduct = (product: OrderProductRelation) => {
+    setAppContext((current) => ({ ...current, order_product_relation: product }));
+  };
+  const openRegistrationProduct = (product: OrderProductRelation) => {
+    setAppContext((current) => ({
+      ...current,
+      registration_state: current.registration_state === "idle"
+        ? transitionRegistration(current.registration_state, "registering")
+        : current.registration_state,
+      order_product_relation: product,
+      farewell_until: null,
+    }));
+  };
+  const clearRegistrationProduct = () => {
+    setAppContext((current) => ({
+      ...current,
+      registration_state: current.registration_state === "registering" ||
+        current.registration_state === "awaiting_completion"
+        ? transitionRegistration(current.registration_state, "idle")
+        : current.registration_state,
+      order_product_relation: null,
+      farewell_until: null,
+    }));
+  };
   const updateOrder = (updatedOrder: Order) => {
     setOrders((current) => current.map((order) =>
       order.id === updatedOrder.id ? updatedOrder : order));
     setSelectedOrder(updatedOrder);
+    const updatedProduct = updatedOrder.products.find(({ id }) => id === selectedProductId);
+    if (updatedProduct) updateRegistrationProduct(updatedProduct);
   };
   const searchMutation = useMutation({
     mutationFn: async (searchQuery: string) => {
@@ -143,20 +171,21 @@ export const OrderSearchWorkspace: FC<{
     },
   });
   const hasSearched = searchMutation.status !== "idle";
-  const showIdleContent = !!gateway && !searchMutation.isPending && !searchMutation.error && !hasSearched;
+  const showIdleContent = !!gateway && !searchMutation.isPending && !searchMutation.error &&
+    !hasSearched && !selectedOrder && !restoredProduct;
 
   const search = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const normalizedQuery = query.trim();
     if (!normalizedQuery || searchMutation.isPending) return;
-    if (selectedProductId) onProductClosed();
+    if (selectedProductId) clearRegistrationProduct();
     setSelectedOrder(null);
     setSelectedProductId(null);
     searchMutation.mutate(normalizedQuery);
   };
 
   const reset = () => {
-    if (selectedProductId) onProductClosed();
+    if (selectedProductId) clearRegistrationProduct();
     setQuery("");
     setOrders([]);
     setSelectedOrder(null);
@@ -169,19 +198,19 @@ export const OrderSearchWorkspace: FC<{
     setSelectedProductId(null);
   };
 
-  const selectProduct = (productId: EntityId) => {
-    setSelectedProductId(productId);
-    onProductSelected();
+  const selectProduct = (product: OrderProductRelation) => {
+    setSelectedProductId(product.id);
+    openRegistrationProduct(product);
   };
 
   const closeProduct = () => {
     setSelectedProductId(null);
-    onProductClosed();
+    clearRegistrationProduct();
   };
 
   const selectedProduct = selectedOrder?.products.find(
     ({ id }) => id === selectedProductId,
-  ) ?? null;
+  ) ?? (restoredProduct?.id === selectedProductId ? restoredProduct : null);
 
   return (
     <Stack sx={{ flex: 1, minHeight: 0 }}>
@@ -236,9 +265,10 @@ export const OrderSearchWorkspace: FC<{
                 <Alert severity="error">{searchMutation.error.message}</Alert>
                 <Button variant="outlined" onClick={() => searchMutation.mutate(query.trim())}>다시 검색</Button>
               </Stack>
-            ) : selectedOrder && selectedProduct ? (
+            ) : selectedProduct ? (
               <OrderProductDetails
-                order={selectedOrder}
+                orderName={selectedOrder?.name ?? "저장된 주문상품"}
+                backLabel={selectedOrder ? "주문 상세" : "닫기"}
                 product={selectedProduct}
                 onBack={closeProduct}
                 modifying={modifyOptionMutation.isPending}
@@ -267,7 +297,7 @@ export const OrderSearchWorkspace: FC<{
               <OrderDetails
                 order={selectedOrder}
                 onBack={() => setSelectedOrder(null)}
-                onSelectProduct={({ id }) => selectProduct(id)}
+                onSelectProduct={selectProduct}
                 refunding={refundMutation.isPending}
                 refundError={refundMutation.error?.message ?? null}
                 onClearRefundError={refundMutation.reset}
@@ -618,7 +648,8 @@ const OrderProductSummary: FC<{
 };
 
 const OrderProductDetails: FC<{
-  order: Order;
+  orderName: string;
+  backLabel: string;
   product: OrderProductRelation;
   onBack: () => void;
   modifying: boolean;
@@ -634,7 +665,8 @@ const OrderProductDetails: FC<{
   onClearTicketInfoError: () => void;
   onModifyTicketInfo: (ticketInfo: TicketInfo) => Promise<Order>;
 }> = ({
-  order,
+  orderName,
+  backLabel,
   product,
   onBack,
   modifying,
@@ -734,13 +766,13 @@ const OrderProductDetails: FC<{
         spacing={1}
         sx={{ px: { xs: 1.5, md: 2 }, py: 1, alignItems: "center" }}
       >
-        <Button size="small" startIcon={<ArrowBack />} onClick={onBack}>주문 상세</Button>
+        <Button size="small" startIcon={<ArrowBack />} onClick={onBack}>{backLabel}</Button>
       </Stack>
       <Divider />
 
       <Stack spacing={3} sx={{ p: { xs: 2, md: 3 }, overflowY: "auto" }}>
         <Stack spacing={1}>
-          <Typography variant="caption" color="text.secondary">{order.name}</Typography>
+          <Typography variant="caption" color="text.secondary">{orderName}</Typography>
           <Stack
             direction={{ xs: "column", sm: "row" }}
             spacing={1}

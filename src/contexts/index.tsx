@@ -1,4 +1,9 @@
 import * as React from "react";
+import {
+  DEFAULT_REGISTRATION_SESSION,
+  loadRegistrationSession,
+  type RegistrationSession,
+} from "../apis/registrationSession";
 import type { RestoreFailure } from "../apis/serial";
 import { isTauri } from "../utils/platform";
 import type { TopBarInfo } from "../schemas/topBar";
@@ -17,7 +22,7 @@ export type EphemeralAppState = {
   serialRestoreError: string | null;
 };
 
-export type AppContextData = PersistedAppState & EphemeralAppState;
+export type AppContextData = PersistedAppState & EphemeralAppState & RegistrationSession;
 
 export type AppContextType = AppContextData & {
   setAppContext: React.Dispatch<React.SetStateAction<AppContextData>>;
@@ -33,11 +38,20 @@ const EPHEMERAL_DEFAULTS: EphemeralAppState = {
   serialRestoreError: null,
 };
 
-export const INITIAL_APP_CONTEXT: AppContextData = { ...PERSISTED_DEFAULTS, ...EPHEMERAL_DEFAULTS };
+export const INITIAL_APP_CONTEXT: AppContextData = {
+  ...PERSISTED_DEFAULTS,
+  ...EPHEMERAL_DEFAULTS,
+  ...DEFAULT_REGISTRATION_SESSION,
+};
+
+const loadInitialAppContext = (): AppContextData => ({
+  ...INITIAL_APP_CONTEXT,
+  ...loadRegistrationSession(),
+});
 
 export const loadAppConfig = (): AppContextData => {
   const raw = typeof localStorage !== "undefined" ? localStorage.getItem(CONTEXT_LOCAL_STORAGE_KEY) : null;
-  if (!raw) return INITIAL_APP_CONTEXT;
+  if (!raw) return loadInitialAppContext();
 
   try {
     const parsed = JSON.parse(raw) as Partial<PersistedAppState>;
@@ -46,10 +60,10 @@ export const loadAppConfig = (): AppContextData => {
       if (parsed[key] !== undefined) acc[key] = parsed[key];
       return acc;
     }, {} as Partial<PersistedAppState>);
-    return { ...INITIAL_APP_CONTEXT, ...restored };
+    return { ...loadInitialAppContext(), ...restored };
   } catch (error) {
     console.error("Failed to parse app config from localStorage:", error);
-    return INITIAL_APP_CONTEXT;
+    return loadInitialAppContext();
   }
 };
 

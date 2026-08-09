@@ -3,6 +3,7 @@ import {
   AutoModeOutlined,
   BugReportOutlined,
   CheckCircleOutlined,
+  DesktopWindowsOutlined,
   LockOutlined,
   MenuOutlined,
   PauseCircleOutlined,
@@ -37,7 +38,7 @@ import {
   DeviceStatusPanel,
   RegistrationStatisticsPanel,
 } from "../components/pages/home/sidebar";
-import { useTopBar } from "../contexts";
+import { useAppContext, useTopBar } from "../contexts";
 import {
   transitionRegistration,
   type RegistrationState,
@@ -86,7 +87,7 @@ const REGISTRATION_STATE_PRESENTATION: Record<
 };
 
 export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gateway }) => {
-  const [registrationState, setRegistrationState] = useState<RegistrationState>("closed");
+  const { registration_state: registrationState, setAppContext } = useAppContext();
   const [isAutomaticRegistrationEnabled, setAutomaticRegistrationEnabled] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const statisticsMutation = useMutation({
@@ -97,6 +98,7 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
   });
   const { mutate: refreshStatistics } = statisticsMutation;
   const scanner = useQrScanner();
+  const { start: startScanner, status: scannerStatus, stop: stopScanner } = scanner;
   const qrInputMode = getQrInputMode();
   const presentation = REGISTRATION_STATE_PRESENTATION[registrationState];
   const isDeskOpen = registrationState !== "closed";
@@ -105,6 +107,15 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
   useEffect(() => {
     if (gateway) refreshStatistics();
   }, [gateway, refreshStatistics]);
+
+  useEffect(() => {
+    if (qrInputMode !== "camera") return;
+    if (isDeskOpen && scannerStatus === "idle") {
+      startScanner({ facingMode: "environment" });
+    } else if (!isDeskOpen && scannerStatus !== "idle" && scannerStatus !== "stopping") {
+      stopScanner();
+    }
+  }, [isDeskOpen, qrInputMode, scannerStatus, startScanner, stopScanner]);
 
   useTopBar(useMemo(() => ({
     title: "ROSA",
@@ -132,14 +143,21 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
   const toggleDesk = () => {
     setMenuAnchor(null);
     if (registrationState === "closed") {
-      setRegistrationState(transitionRegistration(registrationState, "idle"));
-      if (qrInputMode === "camera") scanner.start({ facingMode: "environment" });
+      setAppContext((current) => ({
+        ...current,
+        registration_state: transitionRegistration(current.registration_state, "idle"),
+        farewell_until: null,
+      }));
       return;
     }
 
-    setRegistrationState(transitionRegistration(registrationState, "closed"));
+    setAppContext((current) => ({
+      ...current,
+      registration_state: transitionRegistration(current.registration_state, "closed"),
+      order_product_relation: null,
+      farewell_until: null,
+    }));
     setAutomaticRegistrationEnabled(false);
-    if (qrInputMode === "camera" && scanner.status !== "idle") scanner.stop();
   };
 
   return (
@@ -168,6 +186,16 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
           </MenuItem>
         )}
         <Divider />
+        <MenuItem
+          component="a"
+          href="/display"
+          target="_blank"
+          rel="noreferrer"
+          onClick={() => setMenuAnchor(null)}
+        >
+          <ListItemIcon><DesktopWindowsOutlined fontSize="small" /></ListItemIcon>
+          <ListItemText>외부 화면 열기</ListItemText>
+        </MenuItem>
         <MenuItem component={Link} to="/debug" onClick={() => setMenuAnchor(null)}>
           <ListItemIcon><BugReportOutlined fontSize="small" /></ListItemIcon>
           <ListItemText>장치 진단</ListItemText>
@@ -192,14 +220,7 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
             }}
           >
             {registrationState === "idle" || registrationState === "registering" ? (
-              <OrderSearchWorkspace
-                gateway={gateway}
-                onRegistrationChanged={() => refreshStatistics()}
-                onProductSelected={() => setRegistrationState((current) =>
-                  current === "idle" ? transitionRegistration(current, "registering") : current)}
-                onProductClosed={() => setRegistrationState((current) =>
-                  current === "registering" ? transitionRegistration(current, "idle") : current)}
-              >
+              <OrderSearchWorkspace gateway={gateway} onRegistrationChanged={() => refreshStatistics()}>
                 {qrInputMode === "camera" ? (
                   <MobileCameraInput scanner={scanner} />
                 ) : (
