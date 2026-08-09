@@ -1,3 +1,4 @@
+use crate::error::{CommandError, CommandResult};
 use rusb::{Context, Device, DeviceHandle, Direction, TransferType, UsbContext};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -49,11 +50,13 @@ pub struct UsbState {
 fn take_device(
     devices: &Arc<Mutex<HashMap<String, Arc<OpenDevice>>>>,
     key: &str,
-) -> Result<Arc<OpenDevice>, String> {
-    let open = devices.lock().map_err(|e| e.to_string())?;
+) -> CommandResult<Arc<OpenDevice>> {
+    let open = devices
+        .lock()
+        .map_err(|e| CommandError::internal(e.to_string()))?;
     open.get(key)
         .cloned()
-        .ok_or("USB 장치가 열려 있지 않습니다".into())
+        .ok_or_else(|| CommandError::new("disconnected", "USB 장치가 열려 있지 않습니다"))
 }
 
 fn device_key(bus: u8, address: u8) -> String {
@@ -61,13 +64,17 @@ fn device_key(bus: u8, address: u8) -> String {
 }
 
 #[tauri::command]
-pub fn usb_list_devices() -> Result<Vec<UsbDeviceInfo>, String> {
-    let context = Context::new().map_err(|e| e.to_string())?;
-    let devices = context.devices().map_err(|e| e.to_string())?;
+pub fn usb_list_devices() -> CommandResult<Vec<UsbDeviceInfo>> {
+    let context = Context::new().map_err(|e| CommandError::usb("USB 초기화에 실패했습니다", e))?;
+    let devices = context
+        .devices()
+        .map_err(|e| CommandError::usb("USB 장치 열거에 실패했습니다", e))?;
 
     let mut result = Vec::new();
     for device in devices.iter() {
-        let desc = device.device_descriptor().map_err(|e| e.to_string())?;
+        let desc = device
+            .device_descriptor()
+            .map_err(|e| CommandError::usb("USB 장치 설명자를 읽지 못했습니다", e))?;
         let handle = device.open().ok();
 
         let manufacturer = handle
@@ -114,10 +121,10 @@ pub fn usb_list_devices() -> Result<Vec<UsbDeviceInfo>, String> {
 /// 벌크 IN/OUT 이 모두 있는 인터페이스를 찾는다. 프린터 클래스를 먼저 보되, 없으면
 /// 아무 인터페이스나 쓴다 — 클래스를 벤더 지정으로 내놓는 기기가 있고, 모르는 기기에
 /// 붙어보려면 그쪽도 열 수 있어야 한다.
-fn find_bulk_interface(device: &Device<Context>) -> Result<(u8, u8, u8, u8), String> {
+fn find_bulk_interface(device: &Device<Context>) -> CommandResult<(u8, u8, u8, u8)> {
     let config = device
         .active_config_descriptor()
-        .map_err(|e| format!("설정 디스크립터를 읽지 못했습니다: {e}"))?;
+        .map_err(|e| CommandError::usb("설정 디스크립터를 읽지 못했습니다", e))?;
 
     let mut candidates: Vec<(u8, u8, u8, u8, u8)> = Vec::new();
     for interface in config.interfaces() {
@@ -150,29 +157,42 @@ fn find_bulk_interface(device: &Device<Context>) -> Result<(u8, u8, u8, u8), Str
         .iter()
         .find(|c| c.4 == USB_CLASS_PRINTER)
         .or_else(|| candidates.first())
-        .ok_or("벌크 IN/OUT 엔드포인트를 가진 인터페이스가 없습니다")?;
+        .ok_or_else(|| {
+            CommandError::new(
+                "unsupported",
+                "벌크 IN/OUT 엔드포인트를 가진 인터페이스가 없습니다",
+            )
+        })?;
     Ok((chosen.0, chosen.1, chosen.2, chosen.3))
 }
 
-fn open_device(bus: u8, address: u8) -> Result<OpenDevice, String> {
-    let context = Context::new().map_err(|e| e.to_string())?;
+fn open_device(bus: u8, address: u8) -> CommandResult<OpenDevice> {
+    let context = Context::new().map_err(|e| CommandError::usb("USB 초기화에 실패했습니다", e))?;
     let device = context
         .devices()
-        .map_err(|e| e.to_string())?
+        .map_err(|e| CommandError::usb("USB 장치 열거에 실패했습니다", e))?
         .iter()
         .find(|d| d.bus_number() == bus && d.address() == address)
-        .ok_or_else(|| format!("USB 장치 {bus}:{address} 를 찾지 못했습니다"))?;
+        .ok_or_else(|| {
+            CommandError::new(
+                "disconnected",
+                format!("USB 장치 {bus}:{address} 를 찾지 못했습니다"),
+            )
+        })?;
 
     let (interface, alt_setting, endpoint_in, endpoint_out) = find_bulk_interface(&device)?;
     let handle = device
         .open()
-        .map_err(|e| format!("USB 장치를 열지 못했습니다: {e}"))?;
+        .map_err(|e| CommandError::usb("USB 장치를 열지 못했습니다", e))?;
 
     // Linux 의 usblp 가 붙어 있으면 claim 이 실패한다. 다른 OS 에서는 지원되지 않는다.
     let _ = handle.set_auto_detach_kernel_driver(true);
 
     handle.claim_interface(interface).map_err(|e| {
-        format!("인터페이스 {interface} 를 점유하지 못했습니다 (다른 프로그램이 사용 중일 수 있습니다): {e}")
+        CommandError::usb(
+            &format!("인터페이스 {interface} 를 점유하지 못했습니다 (다른 프로그램이 사용 중일 수 있습니다)"),
+            e,
+        )
     })?;
     // 리셋하면 장치가 재열거되므로, alt setting 만 명시적으로 맞춘다.
     let _ = handle.set_alternate_setting(interface, alt_setting);
@@ -190,13 +210,13 @@ pub async fn usb_open(
     state: tauri::State<'_, UsbState>,
     bus: u8,
     address: u8,
-) -> Result<String, String> {
+) -> CommandResult<String> {
     let devices = state.devices.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let key = device_key(bus, address);
         if devices
             .lock()
-            .map_err(|e| e.to_string())?
+            .map_err(|e| CommandError::internal(e.to_string()))?
             .contains_key(&key)
         {
             return Ok(key);
@@ -205,24 +225,27 @@ pub async fn usb_open(
         let device = Arc::new(open_device(bus, address)?);
         devices
             .lock()
-            .map_err(|e| e.to_string())?
+            .map_err(|e| CommandError::internal(e.to_string()))?
             .entry(key.clone())
             .or_insert(device);
         Ok(key)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| CommandError::internal(e.to_string()))?
 }
 
 #[tauri::command]
-pub async fn usb_close(state: tauri::State<'_, UsbState>, key: String) -> Result<(), String> {
+pub async fn usb_close(state: tauri::State<'_, UsbState>, key: String) -> CommandResult<()> {
     let devices = state.devices.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        devices.lock().map_err(|e| e.to_string())?.remove(&key);
+        devices
+            .lock()
+            .map_err(|e| CommandError::internal(e.to_string()))?
+            .remove(&key);
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| CommandError::internal(e.to_string()))?
 }
 
 #[tauri::command]
@@ -231,7 +254,7 @@ pub async fn usb_write(
     key: String,
     data: Vec<u8>,
     chunk_bytes: usize,
-) -> Result<usize, String> {
+) -> CommandResult<usize> {
     let devices = state.devices.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let device = take_device(&devices, &key)?;
@@ -248,12 +271,14 @@ pub async fn usb_write(
             written += device
                 .handle
                 .write_bulk(device.endpoint_out, &data[written..end], timeout)
-                .map_err(|e| format!("USB 쓰기에 실패했습니다 ({written} B 전송 후): {e}"))?;
+                .map_err(|e| {
+                    CommandError::usb(&format!("USB 쓰기에 실패했습니다 ({written} B 전송 후)"), e)
+                })?;
         }
         Ok(written)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| CommandError::internal(e.to_string()))?
 }
 
 /// 응답에 프레이밍이 없어, 정확히 `length` 바이트가 쌓일 때까지 누적한다.
@@ -263,7 +288,7 @@ pub async fn usb_read(
     key: String,
     length: usize,
     timeout_ms: u64,
-) -> Result<Vec<u8>, String> {
+) -> CommandResult<Vec<u8>> {
     let devices = state.devices.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let device = take_device(&devices, &key)?;
@@ -275,9 +300,12 @@ pub async fn usb_read(
         while received.len() < length {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
-                return Err(format!(
-                    "USB 읽기가 시간을 초과했습니다: {} / {length} B",
-                    received.len()
+                return Err(CommandError::new(
+                    "timeout",
+                    format!(
+                        "USB 읽기가 시간을 초과했습니다: {} / {length} B",
+                        received.len()
+                    ),
                 ));
             }
             let want = (length - received.len()).min(READ_PACKET_SIZE);
@@ -287,11 +315,11 @@ pub async fn usb_read(
             {
                 Ok(n) => received.extend_from_slice(&buffer[..n]),
                 Err(rusb::Error::Timeout) => continue,
-                Err(e) => return Err(format!("USB 읽기에 실패했습니다: {e}")),
+                Err(e) => return Err(CommandError::usb("USB 읽기에 실패했습니다", e)),
             }
         }
         Ok(received)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| CommandError::internal(e.to_string()))?
 }

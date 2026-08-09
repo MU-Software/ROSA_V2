@@ -1,4 +1,5 @@
 import { createSerialAdapter, type PortInfo, type SerialAdapter } from "../adapters";
+import { TransportError } from "../adapters/errors";
 import { isTauri } from "../utils/platform";
 import { createSerialBridge, type SerialBridge } from "./serialBridge";
 import { probeBaudRate, type BaudProbeResult } from "./serialScan";
@@ -45,15 +46,15 @@ export type RestoreResult = {
   failed: RestoreFailure[];
 };
 
-const BUSY_PATTERN = /exclusive lock|access is denied|networkerror|failed to open serial port|busy|in use/i;
-
 /** 브라우저와 serialport 크레이트가 서로 다른 문구를 쓰므로 한 줄로 통일한다. */
 export function describeOpenError(err: unknown): string {
-  const message = err instanceof Error ? err.message : String(err);
-  if (err instanceof DOMException && err.name === "NetworkError") {
-    return "다른 프로그램이 포트를 사용 중이거나 기기가 응답하지 않습니다";
+  if (err instanceof TransportError) {
+    if (err.code === "busy" || err.code === "already-open") return "다른 프로그램이 포트를 사용 중입니다";
+    if (err.code === "permission-denied") return "시리얼 포트 접근 권한이 없습니다";
+    if (err.code === "unavailable") return "포트를 사용할 수 없거나 기기가 응답하지 않습니다";
+    return err.message;
   }
-  if (BUSY_PATTERN.test(message)) return "다른 프로그램이 포트를 사용 중입니다";
+  const message = err instanceof Error ? err.message : String(err);
   return message;
 }
 

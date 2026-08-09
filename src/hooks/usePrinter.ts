@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { printerManager, type PrinterConnection, type PrinterDevice, type PrinterSettings } from "../apis/printer";
+import {
+  printerManager,
+  type PrinterConnection,
+  type PrinterDevice,
+  type PrinterSettings,
+  type PrinterState,
+} from "../apis/printer";
 
 export function usePrinterDevices(): PrinterDevice[] {
   const [devices, setDevices] = useState<PrinterDevice[]>(() => printerManager.listDevices());
@@ -15,6 +21,16 @@ export function usePrinterConnection(key: string): PrinterConnection | undefined
     return printerManager.onChange(sync);
   }, [key]);
   return connection;
+}
+
+export function usePrinterState(key: string): PrinterState {
+  const [state, setState] = useState(() => printerManager.getState(key));
+  useEffect(() => {
+    const sync = () => setState(printerManager.getState(key));
+    sync();
+    return printerManager.onChange(sync);
+  }, [key]);
+  return state;
 }
 
 export function usePrinterSettings(deviceKey: string | undefined): PrinterSettings {

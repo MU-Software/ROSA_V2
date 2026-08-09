@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { isAndroid, isIos, isTauri } from "../utils/platform";
 import { DEFAULT_READ_TIMEOUT_MS, type DiscoveryFilter, type LinkSpec, type UsbLink } from "../printing/profiles";
-import type { DeviceSession, DeviceTransport, DiscoveredDevice } from "./device";
+import { createDisconnectSignal, type DeviceSession, type DeviceTransport, type DiscoveredDevice } from "./device";
+import { TransportError, toTransportError } from "./errors";
 
 /** Rust `usb_list_devices` 의 응답. snake_case 는 serde 가 내는 그대로다. */
 export type RustUsbDevice = {
@@ -17,7 +18,13 @@ export type RustUsbDevice = {
   interface_classes: number[];
 };
 
-export const listRustDevices = (): Promise<RustUsbDevice[]> => invoke<RustUsbDevice[]>("usb_list_devices");
+export const listRustDevices = async (): Promise<RustUsbDevice[]> => {
+  try {
+    return await invoke<RustUsbDevice[]>("usb_list_devices");
+  } catch (error) {
+    throw toTransportError(error, "unavailable");
+  }
+};
 
 export const USB_CLASS_PRINTER = 0x07;
 
@@ -227,8 +234,12 @@ class WebUsbTransport implements DeviceTransport {
     const device = this.devices.get(key);
     if (!device) throw new Error(`USB 장치 "${key}" 가 등록되어 있지 않습니다`);
 
-    await device.open();
-    if (!device.configuration) await device.selectConfiguration(1);
+    try {
+      await device.open();
+      if (!device.configuration) await device.selectConfiguration(1);
+    } catch (error) {
+      throw toTransportError(error, "unavailable");
+    }
 
     const { interfaceNumber, alternateSetting, inEndpoint, outEndpoint } = findBulkEndpoints(device);
     await device.claimInterface(interfaceNumber);
@@ -237,19 +248,41 @@ class WebUsbTransport implements DeviceTransport {
     // WebUSB 는 전송을 취소할 수 없다. 시간이 다한 transferIn 은 살아남아 다음 read 의
     // 응답을 가로채므로, 한 번 어긋나면 다시 연결하기 전까지 읽기를 막는다.
     let readsDesynced = false;
+    const disconnect = createDisconnectSignal();
+    const handleDisconnect = (event: USBConnectionEvent) => {
+      if (event.device === device) {
+        disconnect.emit(new TransportError("disconnected", `USB 장치 "${key}" 연결이 끊겼습니다`));
+      }
+    };
+    navigator.usb.addEventListener("disconnect", handleDisconnect);
+
+    const sessionError = (error: unknown): TransportError => {
+      const mapped = toTransportError(error, "io");
+      const normalized = mapped.code === "unavailable"
+        ? new TransportError("disconnected", mapped.message, { cause: mapped })
+        : mapped;
+      if (normalized.code === "disconnected") disconnect.emit(normalized);
+      return normalized;
+    };
 
     return {
+      onDisconnect: disconnect.onDisconnect,
       write: async (data) => {
-        const chunk = chunkBytes > 0 ? chunkBytes : data.length;
-        for (let at = 0; at < data.length; at += chunk) {
-          // subarray 는 호출자의 ArrayBufferLike 를 물고 있어 BufferSource 로 통하지 않는다.
-          const result = await device.transferOut(outEndpoint, new Uint8Array(data.subarray(at, at + chunk)));
-          if (result.status !== "ok") throw new Error(`USB 쓰기가 "${result.status}" 로 끝났습니다 (${at} B 전송 후)`);
+        try {
+          const chunk = chunkBytes > 0 ? chunkBytes : data.length;
+          for (let at = 0; at < data.length; at += chunk) {
+            const result = await device.transferOut(outEndpoint, new Uint8Array(data.subarray(at, at + chunk)));
+            if (result.status !== "ok") {
+              throw new TransportError("io", `USB 쓰기가 "${result.status}" 로 끝났습니다 (${at} B 전송 후)`);
+            }
+          }
+        } catch (error) {
+          throw sessionError(error);
         }
       },
 
       read: async (length, timeoutMs = DEFAULT_READ_TIMEOUT_MS) => {
-        if (readsDesynced) throw new Error("이전 읽기가 시간을 초과해 응답이 어긋났습니다. 다시 연결하세요");
+        if (readsDesynced) throw new TransportError("protocol-error", "이전 읽기가 시간을 초과해 응답이 어긋났습니다. 다시 연결하세요");
 
         const received = new Uint8Array(length);
         let total = 0;
@@ -257,17 +290,17 @@ class WebUsbTransport implements DeviceTransport {
 
         while (total < length) {
           const remaining = deadline - Date.now();
-          if (remaining <= 0) throw new Error(`USB 읽기가 시간을 초과했습니다: ${total} / ${length} B`);
+          if (remaining <= 0) throw new TransportError("timeout", `USB 읽기가 시간을 초과했습니다: ${total} / ${length} B`);
 
           let result: USBInTransferResult;
           try {
             result = await raceTimeout(device.transferIn(inEndpoint, length - total), remaining, "USB 읽기");
           } catch (err) {
             readsDesynced = true;
-            throw err;
+            throw sessionError(err);
           }
 
-          if (result.status !== "ok") throw new Error(`USB 읽기가 "${result.status}" 로 끝났습니다`);
+          if (result.status !== "ok") throw new TransportError("io", `USB 읽기가 "${result.status}" 로 끝났습니다`);
           if (!result.data?.byteLength) continue;
           received.set(new Uint8Array(result.data.buffer, result.data.byteOffset, result.data.byteLength), total);
           total += result.data.byteLength;
@@ -276,6 +309,8 @@ class WebUsbTransport implements DeviceTransport {
       },
 
       close: async () => {
+        disconnect.expectClose();
+        navigator.usb.removeEventListener("disconnect", handleDisconnect);
         try {
           await device.releaseInterface(interfaceNumber);
         } catch {
@@ -307,16 +342,42 @@ class TauriUsbTransport implements DeviceTransport {
     const { chunkBytes } = link as UsbLink;
     const [bus, address] = key.split(":").map(Number);
     if (!Number.isInteger(bus) || !Number.isInteger(address)) throw new Error(`USB 키 형식이 올바르지 않습니다: "${key}"`);
-    await invoke<string>("usb_open", { bus, address });
+    try {
+      await invoke<string>("usb_open", { bus, address });
+    } catch (error) {
+      throw toTransportError(error, "unavailable");
+    }
+
+    const disconnect = createDisconnectSignal();
+    const sessionError = (error: unknown): TransportError => {
+      const mapped = toTransportError(error, "io");
+      if (mapped.code === "disconnected") disconnect.emit(mapped);
+      return mapped;
+    };
 
     return {
+      onDisconnect: disconnect.onDisconnect,
       write: async (data) => {
-        await invoke<number>("usb_write", { key, data: Array.from(data), chunkBytes });
+        try {
+          await invoke<number>("usb_write", { key, data: Array.from(data), chunkBytes });
+        } catch (error) {
+          throw sessionError(error);
+        }
       },
-      read: async (length, timeoutMs = DEFAULT_READ_TIMEOUT_MS) =>
-        new Uint8Array(await invoke<number[]>("usb_read", { key, length, timeoutMs })),
+      read: async (length, timeoutMs = DEFAULT_READ_TIMEOUT_MS) => {
+        try {
+          return new Uint8Array(await invoke<number[]>("usb_read", { key, length, timeoutMs }));
+        } catch (error) {
+          throw sessionError(error);
+        }
+      },
       close: async () => {
-        await invoke("usb_close", { key });
+        disconnect.expectClose();
+        try {
+          await invoke("usb_close", { key });
+        } catch (error) {
+          throw toTransportError(error, "disconnected");
+        }
       },
     };
   }

@@ -8,9 +8,17 @@ import { defaultTestCardHeight, drawTestCard } from "../../../printing/testCard"
 import { printerManager, type PrinterDevice, type PrinterSettings } from "../../../apis/printer";
 import { toMessage } from "../../../utils/bytes";
 import { useCallback, useRef, useState, type FC } from "react";
-import { usePrinterConnection, usePrinterDevices, usePrinterSettings } from "../../../hooks/usePrinter";
+import { usePrinterConnection, usePrinterDevices, usePrinterSettings, usePrinterState } from "../../../hooks/usePrinter";
 
 const TRANSPORT_LABELS: Record<"usb" | "btspp" | "ble", string> = { usb: "USB", btspp: "BT SPP", ble: "BLE" };
+const STATUS_LABELS = {
+  disconnected: "연결 안 됨",
+  connecting: "연결 중",
+  ready: "연결됨",
+  printing: "출력 중",
+  disconnecting: "연결 해제 중",
+  faulted: "연결 끊김",
+} as const;
 
 const LabelSpecFields: FC<{ deviceKey: string; settings: PrinterSettings }> = ({ deviceKey, settings }) => {
   const label = settings.label ?? { widthMm: 0, heightMm: 0 };
@@ -42,6 +50,7 @@ const LabelSpecFields: FC<{ deviceKey: string; settings: PrinterSettings }> = ({
 const PrinterRow: FC<{ device: PrinterDevice }> = ({ device }) => {
   const profile = device.profile;
   const connection = usePrinterConnection(device.key);
+  const state = usePrinterState(device.key);
   const settings = usePrinterSettings(device.key);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -95,10 +104,15 @@ const PrinterRow: FC<{ device: PrinterDevice }> = ({ device }) => {
           {profile
             ? <Chip size="small" color="primary" label={profile.name} />
             : <Chip size="small" color="default" label="지원하지 않는 기기" />}
+          <Chip
+            size="small"
+            color={state.status === "faulted" ? "error" : state.status === "ready" ? "success" : "default"}
+            label={STATUS_LABELS[state.status]}
+          />
           <Box sx={{ flexGrow: 1 }} />
           {profile && (connection
-            ? <Button size="small" onClick={() => run("해제", () => printerManager.disconnect(device.key))}>연결 해제</Button>
-            : <Button size="small" variant="outlined" onClick={() => run("연결", async () => { await printerManager.connect(device.key); })}>연결</Button>
+            ? <Button size="small" disabled={state.status === "printing" || state.status === "disconnecting"} onClick={() => run("해제", () => printerManager.disconnect(device.key))}>연결 해제</Button>
+            : <Button size="small" variant="outlined" disabled={state.status === "connecting" || state.status === "disconnecting"} onClick={() => run("연결", async () => { await printerManager.connect(device.key); })}>연결</Button>
           )}
         </Stack>
 
@@ -110,6 +124,9 @@ const PrinterRow: FC<{ device: PrinterDevice }> = ({ device }) => {
 
         {busy && <Typography variant="caption">{busy} 중…</Typography>}
         {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
+        {state.status === "faulted" && state.error && (
+          <Alert severity="error">장치 연결이 끊겼습니다: {state.error.message}</Alert>
+        )}
 
         {connection && (
           <>

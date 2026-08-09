@@ -1,4 +1,5 @@
 import type { DeviceSession, DeviceTransport, DiscoveredDevice } from "../adapters/device";
+import { hasTransportCode, toTransportError, type TransportError } from "../adapters/errors";
 import { createPrinterTransports } from "../adapters/printer";
 import {
   knownPrinterFilter,
@@ -43,6 +44,19 @@ export type PrinterConnection = {
   link?: string;
 };
 
+export type PrinterConnectionStatus =
+  | "disconnected"
+  | "connecting"
+  | "ready"
+  | "printing"
+  | "disconnecting"
+  | "faulted";
+
+export type PrinterState = {
+  status: PrinterConnectionStatus;
+  error?: TransportError;
+};
+
 /** `sending` 은 바이트를 넘기는 중, `printing` 은 프린터가 소화하는 중. */
 export type PrintPhase = "sending" | "printing";
 
@@ -55,6 +69,7 @@ type ActiveConnection = PrinterConnection & {
   session: DeviceSession;
   /** 잡을 직렬화한다. 겹쳐 보내면 프린터가 두 잡의 바이트를 하나로 읽는다. */
   queue: Promise<void>;
+  unsubscribeDisconnect: () => void;
 };
 
 /** 매번 새 객체를 돌려주면 구독자가 값이 바뀐 줄 알고 다시 그린다. */
@@ -69,13 +84,12 @@ const completionTimeoutMs = (jobBytes: number): number => 15_000 + (jobBytes / 2
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** 완료 질의의 무응답은 "아직 인쇄 중" 이고, 그 밖의 실패는 다시 물어도 소용없다. */
-const isTimeout = (err: unknown): boolean => /시간을 초과|timed? ?out/i.test(toMessage(err));
-
 export class PrinterManager {
   private readonly transports: DeviceTransport[];
   private devices = new Map<string, PrinterDevice>();
   private connections = new Map<string, ActiveConnection>();
+  private connecting = new Map<string, Promise<PrinterConnection>>();
+  private states = new Map<string, PrinterState>();
   private settings: Record<string, PrinterSettings> = {};
   private legacyProfileSettings: Record<string, PrinterSettings> = {};
   private changeListeners = new Set<() => void>();
@@ -203,6 +217,10 @@ export class PrinterManager {
     return this.connections.has(key);
   }
 
+  getState(key: string): PrinterState {
+    return this.states.get(key) ?? { status: "disconnected" };
+  }
+
   getConnection(key: string): PrinterConnection | undefined {
     return this.connections.get(key);
   }
@@ -210,7 +228,23 @@ export class PrinterManager {
   async connect(key: string): Promise<PrinterConnection> {
     const existing = this.connections.get(key);
     if (existing) return existing;
+    const pending = this.connecting.get(key);
+    if (pending) return pending;
 
+    this.setState(key, { status: "connecting" });
+    const opening = this.openConnection(key);
+    this.connecting.set(key, opening);
+    try {
+      return await opening;
+    } catch (error) {
+      this.setState(key, { status: "faulted", error: toTransportError(error) });
+      throw error;
+    } finally {
+      if (this.connecting.get(key) === opening) this.connecting.delete(key);
+    }
+  }
+
+  private async openConnection(key: string): Promise<PrinterConnection> {
     const device = this.devices.get(key);
     if (!device) throw new Error(`프린터 "${key}" 가 목록에 없습니다`);
     if (!device.profile) throw new Error(`"${device.name}" 은 지원하는 프린터가 아닙니다`);
@@ -221,9 +255,22 @@ export class PrinterManager {
     if (!link) throw new Error(`${profile.name} 은 ${transport.kind} 로 연결할 수 없습니다`);
 
     const session = await transport.open(key, link);
-    const connection: ActiveConnection = { key, profile, session, link: session.describe, queue: Promise.resolve() };
+    const connection: ActiveConnection = {
+      key,
+      profile,
+      session,
+      link: session.describe,
+      queue: Promise.resolve(),
+      unsubscribeDisconnect: () => undefined,
+    };
+    connection.unsubscribeDisconnect = session.onDisconnect((error) => {
+      if (this.connections.get(key) !== connection) return;
+      this.connections.delete(key);
+      connection.unsubscribeDisconnect();
+      this.setState(key, { status: "faulted", error });
+    });
     this.connections.set(key, connection);
-    this.notifyChange();
+    this.setState(key, { status: "ready" });
 
     // 상태 조회가 실패해도 연결 자체는 살려둔다 — 인쇄가 가능한 기종이 있다.
     if (profile.probe) {
@@ -242,19 +289,35 @@ export class PrinterManager {
   }
 
   async disconnect(key: string): Promise<void> {
+    const opening = this.connecting.get(key);
+    if (opening) {
+      this.setState(key, { status: "disconnecting" });
+      try { await opening; } catch { /* 열리지 않았으면 닫을 세션도 없다. */ }
+    }
+
     const connection = this.connections.get(key);
-    if (!connection) return;
+    if (!connection) {
+      this.setState(key, { status: "disconnected" });
+      return;
+    }
+    this.setState(key, { status: "disconnecting" });
+
+    // 출력 바이트가 전송 중인 세션을 닫지 않는다. queue 는 항상 catch 된 약속이다.
+    await connection.queue;
     this.connections.delete(key);
-    this.notifyChange();
+    connection.unsubscribeDisconnect();
     try {
       await connection.session.close();
     } catch (err) {
       console.warn(`Failed to close printer "${key}":`, toMessage(err));
+    } finally {
+      this.setState(key, { status: "disconnected" });
     }
   }
 
   async disconnectAll(): Promise<void> {
-    await Promise.all([...this.connections.keys()].map((key) => this.disconnect(key)));
+    const keys = new Set([...this.connections.keys(), ...this.connecting.keys()]);
+    await Promise.all([...keys].map((key) => this.disconnect(key)));
   }
 
   listActions(key: string): PrinterAction[] {
@@ -330,14 +393,24 @@ export class PrinterManager {
   }
 
   private async send(connection: ActiveConnection, job: Uint8Array, options: PrintOptions): Promise<void> {
-    options.onPhase?.("sending");
-    await connection.session.write(job);
+    if (this.connections.get(connection.key) !== connection) {
+      throw new Error(`프린터 "${connection.key}" 연결이 출력 전에 끊겼습니다`);
+    }
+    this.setState(connection.key, { status: "printing" });
+    try {
+      options.onPhase?.("sending");
+      await connection.session.write(job);
 
-    const probe = connection.profile.completionProbe;
-    if (!probe) return;
+      const probe = connection.profile.completionProbe;
+      if (!probe) return;
 
-    options.onPhase?.("printing");
-    await this.waitUntilIdle(connection, probe, completionTimeoutMs(job.length));
+      options.onPhase?.("printing");
+      await this.waitUntilIdle(connection, probe, completionTimeoutMs(job.length));
+    } finally {
+      if (this.connections.get(connection.key) === connection && this.getState(connection.key).status === "printing") {
+        this.setState(connection.key, { status: "ready" });
+      }
+    }
   }
 
   private async waitUntilIdle(
@@ -355,7 +428,7 @@ export class PrinterManager {
         if (!judge || (await judge(reply))) return;
       } catch (err) {
         // 무응답 = 아직 인쇄 중. 그 밖의 실패는 다시 물어도 소용없다.
-        if (!isTimeout(err)) throw err;
+        if (!hasTransportCode(err, "timeout")) throw err;
       }
       // 읽기가 즉시 실패해도 간격은 지켜야 한다 — 안 그러면 바쁜 대기가 된다.
       const rest = probe.intervalMs - (Date.now() - asked);
@@ -375,6 +448,11 @@ export class PrinterManager {
     const connection = this.connections.get(key);
     if (!connection) throw new Error(`프린터 "${key}" 가 연결되어 있지 않습니다`);
     return connection;
+  }
+
+  private setState(key: string, state: PrinterState): void {
+    this.states.set(key, state);
+    this.notifyChange();
   }
 
   private notifyChange(): void {

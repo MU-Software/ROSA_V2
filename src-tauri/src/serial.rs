@@ -1,3 +1,4 @@
+use crate::error::{CommandError, CommandResult};
 use serde::Serialize;
 use serialport::{available_ports, SerialPort, SerialPortType};
 use std::collections::HashMap;
@@ -38,6 +39,7 @@ struct DataEvent {
 #[derive(Clone, Serialize)]
 struct ErrorEvent {
     path: String,
+    code: String,
     message: String,
 }
 
@@ -59,8 +61,9 @@ pub struct SerialState {
 }
 
 #[tauri::command]
-pub fn serial_list_ports() -> Result<Vec<PortInfo>, String> {
-    let ports = available_ports().map_err(|e| e.to_string())?;
+pub fn serial_list_ports() -> CommandResult<Vec<PortInfo>> {
+    let ports = available_ports()
+        .map_err(|e| CommandError::serial("시리얼 포트 열거에 실패했습니다", e, "unavailable"))?;
     Ok(ports
         .into_iter()
         .map(|p| {
@@ -98,21 +101,35 @@ pub fn serial_open(
     state: State<'_, SerialState>,
     path: String,
     baud_rate: u32,
-) -> Result<(), String> {
-    let mut ports = state.ports.lock().map_err(|e| e.to_string())?;
+) -> CommandResult<()> {
+    let mut ports = state
+        .ports
+        .lock()
+        .map_err(|e| CommandError::internal(e.to_string()))?;
     if ports.contains_key(&path) {
-        return Err(format!("Port \"{path}\" is already open"));
+        return Err(CommandError::new(
+            "already-open",
+            format!("Port \"{path}\" is already open"),
+        ));
     }
 
     let writer = serialport::new(&path, baud_rate)
         .timeout(Duration::from_millis(WRITE_TIMEOUT_MS))
         .open()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| CommandError::serial("시리얼 포트를 열지 못했습니다", e, "unavailable"))?;
 
-    let mut reader = writer.try_clone().map_err(|e| e.to_string())?;
+    let mut reader = writer.try_clone().map_err(|e| {
+        CommandError::serial("시리얼 읽기 핸들을 만들지 못했습니다", e, "disconnected")
+    })?;
     reader
         .set_timeout(Duration::from_millis(READ_POLL_MS))
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            CommandError::serial(
+                "시리얼 읽기 타임아웃을 설정하지 못했습니다",
+                e,
+                "disconnected",
+            )
+        })?;
 
     let stop = Arc::new(AtomicBool::new(false));
     let handle = spawn_read_loop(app, path.clone(), reader, stop.clone());
@@ -156,6 +173,7 @@ fn spawn_read_loop(
                         ERROR_EVENT,
                         ErrorEvent {
                             path: path.clone(),
+                            code: "disconnected".to_string(),
                             message: e.to_string(),
                         },
                     );
@@ -168,9 +186,14 @@ fn spawn_read_loop(
 }
 
 #[tauri::command]
-pub fn serial_close(state: State<'_, SerialState>, path: String) -> Result<(), String> {
-    let mut ports = state.ports.lock().map_err(|e| e.to_string())?;
-    let mut entry = ports.remove(&path).ok_or("Port not open")?;
+pub fn serial_close(state: State<'_, SerialState>, path: String) -> CommandResult<()> {
+    let mut ports = state
+        .ports
+        .lock()
+        .map_err(|e| CommandError::internal(e.to_string()))?;
+    let mut entry = ports
+        .remove(&path)
+        .ok_or_else(|| CommandError::new("disconnected", "Port not open"))?;
     // 리더는 복제된 핸들을 쓰므로 writer 를 드롭해도 멈추지 않는다.
     entry.stop.store(true, Ordering::Relaxed);
     drop(ports);
@@ -179,7 +202,7 @@ pub fn serial_close(state: State<'_, SerialState>, path: String) -> Result<(), S
     if let Some(handle) = entry.reader.take() {
         handle
             .join()
-            .map_err(|_| "Reader thread panicked".to_string())?;
+            .map_err(|_| CommandError::internal("Reader thread panicked"))?;
     }
     Ok(())
 }
@@ -189,8 +212,16 @@ pub fn serial_write(
     state: State<'_, SerialState>,
     path: String,
     data: Vec<u8>,
-) -> Result<usize, String> {
-    let mut ports = state.ports.lock().map_err(|e| e.to_string())?;
-    let entry = ports.get_mut(&path).ok_or("Port not open")?;
-    entry.writer.write(&data).map_err(|e| e.to_string())
+) -> CommandResult<usize> {
+    let mut ports = state
+        .ports
+        .lock()
+        .map_err(|e| CommandError::internal(e.to_string()))?;
+    let entry = ports
+        .get_mut(&path)
+        .ok_or_else(|| CommandError::new("disconnected", "Port not open"))?;
+    entry
+        .writer
+        .write(&data)
+        .map_err(|e| CommandError::new("io", format!("시리얼 쓰기에 실패했습니다: {e}")))
 }

@@ -1,3 +1,4 @@
+mod error;
 #[cfg(not(target_os = "ios"))]
 mod serial;
 #[cfg(not(target_os = "ios"))]

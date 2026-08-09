@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { isTauri } from "../utils/platform";
+import { TransportError, toTransportError } from "./errors";
 
 /** `src-tauri/src/serial.rs` 의 상수와 반드시 동일해야 한다. */
 const DATA_EVENT = "serial://data";
@@ -40,7 +41,12 @@ type RustPortInfo = {
 
 class TauriSerialAdapter implements SerialAdapter {
   async listPorts(): Promise<PortInfo[]> {
-    const ports = await invoke<RustPortInfo[]>("serial_list_ports");
+    let ports: RustPortInfo[];
+    try {
+      ports = await invoke<RustPortInfo[]>("serial_list_ports");
+    } catch (error) {
+      throw toTransportError(error, "unavailable");
+    }
     return ports.map((p) => ({
       path: p.path,
       portType: p.port_type,
@@ -57,11 +63,19 @@ class TauriSerialAdapter implements SerialAdapter {
   }
 
   async open(path: string, baudRate: number): Promise<void> {
-    await invoke("serial_open", { path, baudRate });
+    try {
+      await invoke("serial_open", { path, baudRate });
+    } catch (error) {
+      throw toTransportError(error, "unavailable");
+    }
   }
 
   async close(path: string): Promise<void> {
-    await invoke("serial_close", { path });
+    try {
+      await invoke("serial_close", { path });
+    } catch (error) {
+      throw toTransportError(error, "disconnected");
+    }
   }
 
   getReadable(path: string): ReadableStream<Uint8Array> {
@@ -78,10 +92,10 @@ class TauriSerialAdapter implements SerialAdapter {
             if (payload.path !== path) return;
             controller.enqueue(new Uint8Array(payload.data));
           }),
-          listen<{ path: string; message: string }>(ERROR_EVENT, ({ payload }) => {
+          listen<{ path: string; code: string; message: string }>(ERROR_EVENT, ({ payload }) => {
             if (payload.path !== path) return;
             stopListening();
-            controller.error(new Error(payload.message));
+            controller.error(toTransportError(payload, "disconnected"));
           }),
           listen<{ path: string }>(CLOSED_EVENT, ({ payload }) => {
             if (payload.path !== path) return;
@@ -97,7 +111,11 @@ class TauriSerialAdapter implements SerialAdapter {
   getWritable(path: string): WritableStream<Uint8Array> {
     return new WritableStream<Uint8Array>({
       write: async (chunk) => {
-        await invoke<number>("serial_write", { path, data: Array.from(chunk) });
+        try {
+          await invoke<number>("serial_write", { path, data: Array.from(chunk) });
+        } catch (error) {
+          throw toTransportError(error, "io");
+        }
       },
     });
   }
@@ -133,13 +151,17 @@ export class WebSerialAdapter implements SerialAdapter {
       return this.describe(this.track(port), port);
     } catch (err) {
       if (err instanceof DOMException && err.name === "NotFoundError") return null;
-      throw err;
+      throw toTransportError(err);
     }
   }
 
   async open(path: string, baudRate: number): Promise<void> {
     const port = this.requirePort(path);
-    if (!port.readable) await port.open({ baudRate });
+    try {
+      if (!port.readable) await port.open({ baudRate });
+    } catch (error) {
+      throw toTransportError(error, "unavailable");
+    }
   }
 
   async close(path: string): Promise<void> {
@@ -156,19 +178,19 @@ export class WebSerialAdapter implements SerialAdapter {
 
   getReadable(path: string): ReadableStream<Uint8Array> {
     const port = this.requirePort(path);
-    if (!port.readable) throw new Error(`Port "${path}" has no readable stream`);
+    if (!port.readable) throw new TransportError("disconnected", `Port "${path}" has no readable stream`);
     return port.readable;
   }
 
   getWritable(path: string): WritableStream<Uint8Array> {
     const port = this.requirePort(path);
-    if (!port.writable) throw new Error(`Port "${path}" has no writable stream`);
+    if (!port.writable) throw new TransportError("disconnected", `Port "${path}" has no writable stream`);
     return port.writable;
   }
 
   private requirePort(path: string): SerialPort {
     const port = this.ports.get(path);
-    if (!port) throw new Error(`Port "${path}" is not open`);
+    if (!port) throw new TransportError("disconnected", `Port "${path}" is not open`);
     return port;
   }
 }
