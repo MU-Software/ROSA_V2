@@ -17,14 +17,14 @@ export function usePrinterConnection(key: string): PrinterConnection | undefined
   return connection;
 }
 
-export function usePrinterSettings(profileId: string | undefined): PrinterSettings {
+export function usePrinterSettings(deviceKey: string | undefined): PrinterSettings {
   const [settings, setSettings] = useState<PrinterSettings>(() =>
-    profileId ? printerManager.getSettings(profileId) : {},
+    deviceKey ? printerManager.getSettings(deviceKey) : {},
   );
   useEffect(() => {
-    const sync = () => setSettings(profileId ? printerManager.getSettings(profileId) : {});
+    const sync = () => setSettings(deviceKey ? printerManager.getSettings(deviceKey) : {});
     sync();
     return printerManager.onChange(sync);
-  }, [profileId]);
+  }, [deviceKey]);
   return settings;
 }

@@ -12,10 +12,10 @@ import { usePrinterConnection, usePrinterDevices, usePrinterSettings } from "../
 
 const TRANSPORT_LABELS: Record<"usb" | "btspp" | "ble", string> = { usb: "USB", btspp: "BT SPP", ble: "BLE" };
 
-const LabelSpecFields: FC<{ profileId: string; settings: PrinterSettings }> = ({ profileId, settings }) => {
+const LabelSpecFields: FC<{ deviceKey: string; settings: PrinterSettings }> = ({ deviceKey, settings }) => {
   const label = settings.label ?? { widthMm: 0, heightMm: 0 };
   const update = (patch: Partial<typeof label>) =>
-    printerManager.updateSettings(profileId, { label: { ...label, ...patch } });
+    printerManager.updateSettings(deviceKey, { label: { ...label, ...patch } });
 
   return (
     <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
@@ -42,7 +42,7 @@ const LabelSpecFields: FC<{ profileId: string; settings: PrinterSettings }> = ({
 const PrinterRow: FC<{ device: PrinterDevice }> = ({ device }) => {
   const profile = device.profile;
   const connection = usePrinterConnection(device.key);
-  const settings = usePrinterSettings(profile?.id);
+  const settings = usePrinterSettings(device.key);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -128,7 +128,7 @@ const PrinterRow: FC<{ device: PrinterDevice }> = ({ device }) => {
               </>
             )}
 
-            {profile && profile.headDots === undefined && <LabelSpecFields profileId={profile.id} settings={settings} />}
+            {profile && profile.headDots === undefined && <LabelSpecFields deviceKey={device.key} settings={settings} />}
 
             <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", gap: 1 }}>
               <Button size="small" variant="contained" disabled={busy !== null} onClick={testPrint}>테스트 인쇄</Button>

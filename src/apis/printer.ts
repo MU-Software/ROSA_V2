@@ -14,12 +14,20 @@ import { RcptImage } from "../printing/receipet";
 import { toMessage } from "../utils/bytes";
 
 const SETTINGS_STORAGE_KEY = "rosa.printer.settings";
+const SETTINGS_STORAGE_VERSION = 2;
 
-/** 프린터가 스스로 알려주지 못해 사용자가 정해야 하는 값들. 프로파일 단위로 저장한다. */
+/** 프린터가 스스로 알려주지 못해 사용자가 정해야 하는 값들. 물리 장치 단위로 저장한다. */
 export type PrinterSettings = {
   label?: LabelSpec;
   /** 눈금자로 보정한 값. */
   rightMarginDots?: number;
+};
+
+type StoredPrinterSettings = {
+  version: typeof SETTINGS_STORAGE_VERSION;
+  devices: Record<string, PrinterSettings>;
+  /** 버전 1의 프로파일 단위 설정. 장치별 설정이 생길 때까지 기본값으로만 쓴다. */
+  legacyProfiles: Record<string, PrinterSettings>;
 };
 
 export type PrinterDevice = DiscoveredDevice & {
@@ -69,6 +77,7 @@ export class PrinterManager {
   private devices = new Map<string, PrinterDevice>();
   private connections = new Map<string, ActiveConnection>();
   private settings: Record<string, PrinterSettings> = {};
+  private legacyProfileSettings: Record<string, PrinterSettings> = {};
   private changeListeners = new Set<() => void>();
 
   constructor(transports: DeviceTransport[] = createPrinterTransports()) {
@@ -82,20 +91,50 @@ export class PrinterManager {
     if (typeof localStorage === "undefined") return;
     try {
       const raw: unknown = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) ?? "{}");
-      if (raw && typeof raw === "object") this.settings = raw as Record<string, PrinterSettings>;
+      if (!raw || typeof raw !== "object") return;
+      const stored = raw as Partial<StoredPrinterSettings>;
+      if (stored.version === SETTINGS_STORAGE_VERSION && stored.devices && typeof stored.devices === "object") {
+        this.settings = stored.devices;
+        if (stored.legacyProfiles && typeof stored.legacyProfiles === "object") {
+          this.legacyProfileSettings = stored.legacyProfiles;
+        }
+      } else {
+        // 이전 형식은 `{ [profileId]: settings }` 였다. 첫 장치별 수정 전까지 기본값으로 유지한다.
+        this.legacyProfileSettings = raw as Record<string, PrinterSettings>;
+      }
     } catch (err) {
       console.error("Failed to load printer settings:", err);
     }
   }
 
-  getSettings(profileId: string): PrinterSettings {
-    return this.settings[profileId] ?? EMPTY_SETTINGS;
+  private settingsId(device: PrinterDevice): string {
+    const prefix = `${device.transport}:${device.vendorId ?? "-"}:${device.productId ?? "-"}`;
+    if (device.serialNumber) return `${prefix}:serial:${device.serialNumber}`;
+    if (device.address) return `${prefix}:address:${device.address}`;
+    // 시리얼번호가 없는 WebUSB/Tauri USB 장치는 영구적인 물리 식별자가 없어 현재 키가 최선이다.
+    return `${prefix}:key:${device.key}`;
   }
 
-  updateSettings(profileId: string, patch: PrinterSettings): void {
-    this.settings[profileId] = { ...this.getSettings(profileId), ...patch };
+  getSettings(key: string): PrinterSettings {
+    const device = this.devices.get(key);
+    if (!device) return EMPTY_SETTINGS;
+    return this.settings[this.settingsId(device)] ??
+      (device.profile ? this.legacyProfileSettings[device.profile.id] : undefined) ??
+      EMPTY_SETTINGS;
+  }
+
+  updateSettings(key: string, patch: PrinterSettings): void {
+    const device = this.devices.get(key);
+    if (!device) throw new Error(`프린터 "${key}" 가 목록에 없습니다`);
+    const id = this.settingsId(device);
+    this.settings[id] = { ...this.getSettings(key), ...patch };
     if (typeof localStorage !== "undefined") {
-      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(this.settings));
+      const stored: StoredPrinterSettings = {
+        version: SETTINGS_STORAGE_VERSION,
+        devices: this.settings,
+        legacyProfiles: this.legacyProfileSettings,
+      };
+      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(stored));
     }
     this.notifyChange();
   }
@@ -131,6 +170,12 @@ export class PrinterManager {
       for (const info of listed) {
         found.set(info.key, { ...info, profile: findProfile(info), transportRef: transport });
       }
+    }
+
+    // 일시적인 검색 실패 때문에 살아 있는 연결이 UI에서 사라지지 않게 유지한다.
+    for (const key of this.connections.keys()) {
+      const connected = this.devices.get(key);
+      if (connected && !found.has(key)) found.set(key, connected);
     }
 
     this.devices = found;
@@ -243,7 +288,7 @@ export class PrinterManager {
    */
   imageSize(key: string): { width: number; height?: number } {
     const connection = this.requireConnection(key);
-    const settings = this.getSettings(connection.profile.id);
+    const settings = this.getSettings(key);
     const printable = connection.probe?.printable;
 
     return {
@@ -268,7 +313,7 @@ export class PrinterManager {
 
   async print(key: string, image: RcptImage, options: PrintOptions = {}): Promise<void> {
     const connection = this.requireConnection(key);
-    const settings = this.getSettings(connection.profile.id);
+    const settings = this.getSettings(key);
 
     const job = connection.profile.buildJob({
       image,
