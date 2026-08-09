@@ -1,5 +1,6 @@
 import type { SvgIconComponent } from "@mui/icons-material";
 import {
+  AutoModeOutlined,
   BugReportOutlined,
   CheckCircleOutlined,
   LockOutlined,
@@ -13,7 +14,6 @@ import {
   Chip,
   Container,
   Divider,
-  FormControlLabel,
   IconButton,
   ListItemIcon,
   ListItemText,
@@ -32,6 +32,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type FC, type MouseEvent } from "react";
 import { Link } from "react-router";
 import { MobileCameraInput } from "../components/pages/home/mobileCamera";
+import { OrderSearchWorkspace } from "../components/pages/home/orderSearch";
 import {
   DeviceStatusPanel,
   RegistrationStatisticsPanel,
@@ -98,7 +99,6 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
   const scanner = useQrScanner();
   const qrInputMode = getQrInputMode();
   const presentation = REGISTRATION_STATE_PRESENTATION[registrationState];
-  const StateIcon = presentation.icon;
   const isDeskOpen = registrationState !== "closed";
   const isNarrow = useMediaQuery((theme: Theme) => theme.breakpoints.down("sm"));
 
@@ -153,6 +153,20 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
           <ListItemIcon><PowerSettingsNew fontSize="small" /></ListItemIcon>
           <ListItemText>{isDeskOpen ? "데스크 닫기" : "데스크 열기"}</ListItemText>
         </MenuItem>
+        {isDeskOpen && (
+          <MenuItem onClick={() => setAutomaticRegistrationEnabled((enabled) => !enabled)}>
+            <ListItemIcon><AutoModeOutlined fontSize="small" /></ListItemIcon>
+            <ListItemText>자동 접수</ListItemText>
+            <Switch
+              size="small"
+              edge="end"
+              checked={isAutomaticRegistrationEnabled}
+              slotProps={{ input: { "aria-label": "자동 접수" } }}
+              onClick={(event) => event.stopPropagation()}
+              onChange={(_, checked) => setAutomaticRegistrationEnabled(checked)}
+            />
+          </MenuItem>
+        )}
         <Divider />
         <MenuItem component={Link} to="/debug" onClick={() => setMenuAnchor(null)}>
           <ListItemIcon><BugReportOutlined fontSize="small" /></ListItemIcon>
@@ -177,53 +191,16 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
               overflow: "hidden",
             }}
           >
-            <Box sx={{ p: { xs: 1.5, sm: 2, md: 3 }, alignSelf: "flex-end" }}>
-              <FormControlLabel
-                control={(
-                  <Switch
-                    checked={isAutomaticRegistrationEnabled}
-                    onChange={(_, checked) => setAutomaticRegistrationEnabled(checked)}
-                    disabled={!isDeskOpen}
-                  />
+            {registrationState === "idle" ? (
+              <OrderSearchWorkspace gateway={gateway}>
+                {qrInputMode === "camera" ? (
+                  <MobileCameraInput scanner={scanner} />
+                ) : (
+                  <RegistrationStateContent presentation={presentation} isDeskOpen={isDeskOpen} />
                 )}
-                label="자동 접수"
-              />
-            </Box>
-            {qrInputMode === "camera" && registrationState === "idle" ? (
-              <MobileCameraInput scanner={scanner} />
+              </OrderSearchWorkspace>
             ) : (
-              <Stack
-                spacing={2}
-                sx={{
-                  flex: 1,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  textAlign: "center",
-                  maxWidth: 480,
-                  mx: "auto",
-                  p: 3,
-                }}
-              >
-                <Box
-                  sx={{
-                    width: 72,
-                    height: 72,
-                    borderRadius: "50%",
-                    display: "grid",
-                    placeItems: "center",
-                    bgcolor: isDeskOpen ? "primary.light" : "grey.100",
-                    color: isDeskOpen ? "primary.contrastText" : "text.disabled",
-                  }}
-                >
-                  <StateIcon sx={{ fontSize: 38 }} />
-                </Box>
-                <Typography variant="h5" sx={{ fontWeight: 700 }}>
-                  {presentation.label}
-                </Typography>
-                <Typography color="text.secondary">
-                  {presentation.description}
-                </Typography>
-              </Stack>
+              <RegistrationStateContent presentation={presentation} isDeskOpen={isDeskOpen} />
             )}
           </Paper>
 
@@ -244,5 +221,43 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
         </Box>
       </Container>
     </Box>
+  );
+};
+
+const RegistrationStateContent: FC<{
+  presentation: RegistrationStatePresentation;
+  isDeskOpen: boolean;
+}> = ({ presentation, isDeskOpen }) => {
+  const StateIcon = presentation.icon;
+
+  return (
+    <Stack
+      spacing={2}
+      sx={{
+        flex: 1,
+        alignItems: "center",
+        justifyContent: "center",
+        textAlign: "center",
+        maxWidth: 480,
+        mx: "auto",
+        p: 3,
+      }}
+    >
+      <Box
+        sx={{
+          width: 72,
+          height: 72,
+          borderRadius: "50%",
+          display: "grid",
+          placeItems: "center",
+          bgcolor: isDeskOpen ? "primary.light" : "grey.100",
+          color: isDeskOpen ? "primary.contrastText" : "text.disabled",
+        }}
+      >
+        <StateIcon sx={{ fontSize: 38 }} />
+      </Box>
+      <Typography variant="h5" sx={{ fontWeight: 700 }}>{presentation.label}</Typography>
+      <Typography color="text.secondary">{presentation.description}</Typography>
+    </Stack>
   );
 };

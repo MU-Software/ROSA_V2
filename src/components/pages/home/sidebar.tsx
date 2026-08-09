@@ -21,7 +21,7 @@ import {
   Typography,
   type ChipProps,
 } from "@mui/material";
-import type { FC, ReactNode } from "react";
+import { useState, type FC, type ReactNode } from "react";
 import { printerManager, type PrinterConnectionStatus } from "../../../apis/printer";
 import { serialManager, type SerialDevice } from "../../../apis/serial";
 import type { RegistrationDeskStatistics } from "../../../gateways";
@@ -60,12 +60,19 @@ export const RegistrationStatisticsPanel: FC<SidebarPanelProps & {
   refreshing: boolean;
   onRefresh: () => void;
 }> = ({ defaultExpanded, statistics, error, requestedAt, refreshing, onRefresh }) => {
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const registrationRate = statistics && statistics.registration_target_count > 0
     ? (statistics.registered_count / statistics.registration_target_count) * 100
     : 0;
 
   return (
-    <Accordion defaultExpanded={defaultExpanded} disableGutters elevation={0} sx={panelSx}>
+    <Accordion
+      expanded={expanded}
+      onChange={(_, nextExpanded) => setExpanded(nextExpanded)}
+      disableGutters
+      elevation={0}
+      sx={panelSx}
+    >
       <AccordionSummary expandIcon={<ExpandMore />}>
         <Stack
           direction="row"
@@ -203,6 +210,7 @@ const getCameraStatus = (status: QrScannerStatus, error: Error | null): DeviceSt
 export const DeviceStatusPanel: FC<SidebarPanelProps & {
   camera?: { status: QrScannerStatus; error: Error | null };
 }> = ({ defaultExpanded, camera }) => {
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const serialDevices = useSerialDevices();
   const printerDevices = useRegisteredPrinterDevices();
   const qrDevices = camera ? [{ key: "camera", label: "카메라" }] : serialDevices;
@@ -212,7 +220,13 @@ export const DeviceStatusPanel: FC<SidebarPanelProps & {
   const deviceCount = qrDevices.length + printerDevices.length;
 
   return (
-    <Accordion defaultExpanded={defaultExpanded} disableGutters elevation={0} sx={panelSx}>
+    <Accordion
+      expanded={expanded}
+      onChange={(_, nextExpanded) => setExpanded(nextExpanded)}
+      disableGutters
+      elevation={0}
+      sx={panelSx}
+    >
       <AccordionSummary expandIcon={<ExpandMore />}>
         <Stack
           direction="row"
