@@ -25,6 +25,8 @@ export interface SerialAdapter {
   requestPort(): Promise<PortInfo | null>;
   open(path: string, baudRate: number): Promise<void>;
   close(path: string): Promise<void>;
+  /** 웹에서는 사이트에 부여된 포트 권한을 철회한다. 다른 플랫폼에는 별도 권한이 없어 no-op이다. */
+  forget(path: string): Promise<void>;
   getReadable(path: string): ReadableStream<Uint8Array>;
   getWritable(path: string): WritableStream<Uint8Array>;
 }
@@ -76,6 +78,10 @@ class TauriSerialAdapter implements SerialAdapter {
     } catch (error) {
       throw toTransportError(error, "disconnected");
     }
+  }
+
+  forget(): Promise<void> {
+    return Promise.resolve();
   }
 
   getReadable(path: string): ReadableStream<Uint8Array> {
@@ -166,13 +172,27 @@ export class WebSerialAdapter implements SerialAdapter {
 
   async close(path: string): Promise<void> {
     const port = this.ports.get(path);
-    // 권한은 유지해야 하므로 맵에서 지우지 않는다. 이미 닫혔으면 할 일이 없다.
+    // close는 연결만 닫는다. 명시적인 사용자 삭제에서만 forget으로 권한과 맵 항목을 제거한다.
     if (!port?.readable && !port?.writable) return;
     try {
       await port.close();
     } catch (err) {
       // 워커로 transfer 된 스트림의 잠금이 남아있을 수 있어 치명적으로 다루지 않는다.
       console.warn(`Failed to close web serial port "${path}":`, err);
+    }
+  }
+
+  async forget(path: string): Promise<void> {
+    const port = this.ports.get(path);
+    if (!port) return;
+    if (typeof port.forget !== "function") {
+      throw new TransportError("unsupported", "이 브라우저는 Serial 장치 권한 해제를 지원하지 않습니다");
+    }
+    try {
+      await port.forget();
+      this.ports.delete(path);
+    } catch (error) {
+      throw toTransportError(error, "unavailable");
     }
   }
 
@@ -200,6 +220,7 @@ class UnsupportedSerialAdapter implements SerialAdapter {
   requestPort(): Promise<PortInfo | null> { return Promise.resolve(null); }
   open(): Promise<void> { return Promise.reject(new TransportError("unsupported", "이 플랫폼은 시리얼 장치를 지원하지 않습니다")); }
   close(): Promise<void> { return Promise.resolve(); }
+  forget(): Promise<void> { return Promise.resolve(); }
   getReadable(): ReadableStream<Uint8Array> { throw new TransportError("unsupported", "이 플랫폼은 시리얼 장치를 지원하지 않습니다"); }
   getWritable(): WritableStream<Uint8Array> { throw new TransportError("unsupported", "이 플랫폼은 시리얼 장치를 지원하지 않습니다"); }
 }

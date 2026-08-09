@@ -44,6 +44,11 @@ type StoredBindings = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
 
+const isUnknownArray = (value: unknown): value is unknown[] => Array.isArray(value);
+
+const isStoredBindings = (value: unknown): value is { version: number; bindings: unknown[] } =>
+  isRecord(value) && value.version === BINDING_STORAGE_VERSION && isUnknownArray(value.bindings);
+
 const optionalString = (value: unknown): value is string | undefined =>
   value === undefined || typeof value === "string";
 
@@ -167,12 +172,13 @@ export class SerialPortManager {
     try {
       const raw: unknown = JSON.parse(localStorage.getItem(BINDING_STORAGE_KEY) ?? "[]");
       // v1은 배열 자체였고 v2부터 스키마 버전을 명시한다.
-      const entries = Array.isArray(raw)
+      const isCurrentSchema = isStoredBindings(raw);
+      const entries = isUnknownArray(raw)
         ? raw
-        : isRecord(raw) && raw.version === BINDING_STORAGE_VERSION && Array.isArray(raw.bindings)
+        : isCurrentSchema
           ? raw.bindings
           : [];
-      if (!Array.isArray(raw) && entries.length === 0 && isRecord(raw) && "version" in raw) {
+      if (!isUnknownArray(raw) && !isCurrentSchema && isRecord(raw) && "version" in raw) {
         console.warn(`지원하지 않는 시리얼 설정 버전입니다: ${String(raw.version)}`);
       }
       this.bindings = entries.flatMap((entry) => {
@@ -180,7 +186,7 @@ export class SerialPortManager {
         return parsed ? [parsed] : [];
       });
       this.bindings.forEach((b) => this.knownLabels.add(b.label));
-      if (Array.isArray(raw)) this.persist();
+      if (isUnknownArray(raw)) this.persist();
     } catch (err) {
       console.error("Failed to load serial bindings:", err);
     }
@@ -266,8 +272,12 @@ export class SerialPortManager {
   async removeDevice(key: string): Promise<void> {
     const device = this.devices.get(key);
     await this.close(key);
+    await this.adapter.forget(key);
     this.devices.delete(key);
-    if (device?.label) this.bindings = this.bindings.filter((b) => b.label !== device.label);
+    if (device?.label) {
+      this.knownLabels.delete(device.label);
+      this.bindings = this.bindings.filter((b) => b.label !== device.label);
+    }
     this.persist();
     this.notifyChange();
   }
@@ -410,6 +420,15 @@ export class SerialPortManager {
 
   private async runRestore(): Promise<RestoreResult> {
     const available = await this.adapter.listPorts();
+    const availableKeys = new Set(available.map((port) => port.path));
+
+    // 권한 철회·물리 분리로 사라진 포트는 화면에서 떼되, 재연결에 쓸 라벨과 바인딩은 유지한다.
+    for (const device of this.listDevices()) {
+      if (availableKeys.has(device.key)) continue;
+      await this.close(device.key);
+      this.devices.delete(device.key);
+    }
+
     // 웹에서는 권한이 부여된 포트가 곧 등록된 기기다.
     if (!isTauri()) available.forEach((port) => this.registerDevice(port));
 
@@ -418,18 +437,23 @@ export class SerialPortManager {
     const failed: RestoreFailure[] = [];
 
     for (const binding of this.bindings) {
-      if (this.findByLabel(binding.label)) continue;
-      const port = isTauri()
-        ? resolveStoredPort(binding, available)
-        : resolveUniquePort(binding, available, taken);
-      // 기기가 아예 없는 경우는 정상이므로 실패로 보고하지 않는다.
-      if (!port) continue;
+      let device = this.findByLabel(binding.label);
+      if (!device) {
+        const port = isTauri()
+          ? resolveStoredPort(binding, available)
+          : resolveUniquePort(binding, available, taken);
+        // 기기가 아예 없는 경우는 정상이므로 실패로 보고하지 않는다.
+        if (!port) continue;
 
-      const device = this.registerDevice(port);
-      device.label = binding.label;
-      device.baudRate = binding.baudRate;
-      device.framing = binding.framing;
+        device = this.registerDevice(port);
+        device.label = binding.label;
+        device.baudRate = binding.baudRate;
+        device.framing = binding.framing;
+      }
       taken.add(device.key);
+
+      // 목록에는 남아 있지만 연결만 끊긴 경우에도 수동 새로고침으로 복구한다.
+      if (this.isOpen(device.key)) continue;
 
       try {
         await this.open(device.key);

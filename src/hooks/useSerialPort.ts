@@ -22,8 +22,11 @@ export function useSerialPort(key: string): UseSerialPortResult {
       unsubData?.();
       unsubError?.();
       unsubData = unsubError = undefined;
-      setConnected(serialManager.isOpen(key));
-      if (!serialManager.isOpen(key)) return;
+      const isOpen = serialManager.isOpen(key);
+      setConnected(isOpen);
+      if (!isOpen) return;
+      // 수동 새로고침 등으로 연결에 성공하면 이전 연결에서 받은 오류를 지운다.
+      setError(null);
       unsubData = serialManager.onData(key, setData);
       unsubError = serialManager.onError(key, setError);
     };
