@@ -109,6 +109,8 @@ const BLE_SCAN_MS = 8000;
 class BleTransport implements DeviceTransport {
   readonly kind = "ble" as const;
   private inbox: number[] = [];
+  private activeKey: string | undefined;
+  private openingKey: string | undefined;
 
   /**
    * 아는 프린터가 보이는 즉시 스캔을 끊는다 — 8 초를 다 기다릴 이유가 없다. 대가로 첫
@@ -163,23 +165,33 @@ class BleTransport implements DeviceTransport {
   async open(key: string, link: LinkSpec): Promise<DeviceSession> {
     const ble = link as BleLink;
 
-    await blec.connect(key, () => {
-      this.inbox = [];
-    });
+    // blec API 는 주소 없이 subscribe/send/disconnect 하므로 프로세스 전체에서 한 연결만
+    // 표현할 수 있다. 상위 매니저가 두 세션을 만들면 응답 inbox 와 연결이 서로 섞인다.
+    if (this.activeKey) throw new Error(`BLE 프린터 "${this.activeKey}" 가 이미 연결되어 있습니다`);
+    if (this.openingKey) throw new Error(`BLE 프린터 "${this.openingKey}" 연결이 진행 중입니다`);
+    this.openingKey = key;
 
-    this.inbox = [];
-    await blec.subscribe(ble.notifyCharacteristic, ble.service, (data) => {
-      this.inbox.push(...data);
-    });
+    try {
+      await blec.connect(key, () => {
+        this.inbox = [];
+      });
+
+      this.inbox = [];
+      await blec.subscribe(ble.notifyCharacteristic, ble.service, (data) => {
+        this.inbox.push(...data);
+      });
+    } catch (err) {
+      try { await blec.disconnect(); } catch { /* 연결 전 실패 */ }
+      throw err;
+    } finally {
+      this.openingKey = undefined;
+    }
+    this.activeKey = key;
 
     // iOS 는 연결할 때 알아서 협상하지만 blec 이 그 값을 못 읽고 기본값을 돌려주기도 한다.
     // 그대로 믿으면 20 B 씩 쓰게 되어 8 배 느려지므로 프로파일의 실측값으로 간다.
     let mtu = BLE_DEFAULT_MTU;
-    try {
-      mtu = await blec.getMtu();
-    } catch {
-      /* 못 읽으면 프로파일 값으로 간다 */
-    }
+    try { mtu = await blec.getMtu(); } catch { /* 못 읽으면 프로파일 값으로 간다 */ }
     const negotiated = mtu > BLE_DEFAULT_MTU;
 
     // **프로파일 값을 넘기지 않는다.** 협상 MTU 보다 큰 쓰기를 걸면 주변장치가 뒷부분을
@@ -219,12 +231,19 @@ class BleTransport implements DeviceTransport {
       },
 
       close: async () => {
+        // 이전 세션의 늦은 close 가 새 연결을 끊지 않게 한다.
+        if (this.activeKey !== key) return;
         try {
           await blec.unsubscribe(ble.notifyCharacteristic, ble.service);
         } catch {
           /* 이미 끊겼다 */
         }
-        await blec.disconnect();
+        try {
+          await blec.disconnect();
+        } finally {
+          this.inbox = [];
+          this.activeKey = undefined;
+        }
       },
     };
   }
