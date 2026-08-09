@@ -1,20 +1,20 @@
 import { ErrorBoundary, type ErrorBoundaryFallbackProps } from "@suspensive/react";
 import { Alert, Button, Container, Stack, Typography } from "@mui/material";
 import { useState, type FC, type PropsWithChildren } from "react";
-import { closeAllDevices } from "../../apis/deviceLifecycle";
+import { closeAllDevicesWithin } from "../../apis/deviceLifecycle";
 
 const AppErrorFallback: FC<ErrorBoundaryFallbackProps> = ({ error, reset }) => {
   const [recovering, setRecovering] = useState(false);
 
   const retry = async () => {
     setRecovering(true);
-    await closeAllDevices();
+    await closeAllDevicesWithin();
     reset();
   };
 
   const reload = async () => {
     setRecovering(true);
-    await closeAllDevices();
+    await closeAllDevicesWithin();
     window.location.reload();
   };
 
