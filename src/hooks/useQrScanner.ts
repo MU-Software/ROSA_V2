@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { startCamera, type CameraSession, type CameraStartOptions } from "../adapters";
 import type { QrCode, QrWorkerInbound, QrWorkerOutbound } from "../workers/qrProtocol";
 
@@ -19,6 +19,7 @@ const toError = (err: unknown): Error => (err instanceof Error ? err : new Error
 type ScannerHandlers = {
   onResult: (result: QrScanResult) => void;
   onError: (error: Error) => void;
+  onFatal: (error: Error) => void;
   /** 미리보기를 붙일 수 있게 세션을 알린다. 정지하면 null. */
   onSession: (session: CameraSession | null) => void;
 };
@@ -40,6 +41,7 @@ class QrScanner {
 
   async start(options?: CameraStartOptions): Promise<void> {
     if (this.running) return;
+    if (this.session || this.worker) await this.stop();
     this.running = true;
 
     let session: CameraSession;
@@ -70,7 +72,7 @@ class QrScanner {
       this.running = false;
       this.pending?.settle(error);
       this.pending = null;
-      this.handlers.onError(error);
+      this.handlers.onFatal(error);
       // 워커가 죽으면 run() 만 멈추고 카메라가 남을 수 있으므로 세션까지 정리한다.
       void this.stop().catch(this.handlers.onError);
     };
@@ -137,6 +139,7 @@ class QrScanner {
 }
 
 export type UseQrScannerResult = {
+  status: QrScannerStatus;
   scanning: boolean;
   session: CameraSession | null;
   result: QrScanResult | null;
@@ -144,15 +147,19 @@ export type UseQrScannerResult = {
   history: string[];
   error: Error | null;
   start: (options?: CameraStartOptions) => void;
+  switchCamera: (options: CameraStartOptions) => void;
   stop: () => void;
 };
 
+export type QrScannerStatus = "idle" | "starting" | "scanning" | "switching" | "stopping" | "error";
+
 export function useQrScanner(): UseQrScannerResult {
-  const [scanning, setScanning] = useState(false);
+  const [status, setStatus] = useState<QrScannerStatus>("idle");
   const [session, setSession] = useState<CameraSession | null>(null);
   const [result, setResult] = useState<QrScanResult | null>(null);
   const [history, setHistory] = useState<string[]>([]);
   const [error, setError] = useState<Error | null>(null);
+  const operationRef = useRef(0);
 
   const scanner = useMemo(
     () =>
@@ -166,34 +173,70 @@ export function useQrScanner(): UseQrScannerResult {
           });
         },
         onError: setError,
-        onSession: (next) => {
-          setSession(next);
-          if (!next) setScanning(false);
+        onFatal: (fatal) => {
+          setError(fatal);
+          setStatus("error");
         },
+        onSession: setSession,
       }),
     [],
   );
 
-  useEffect(() => () => void scanner.stop(), [scanner]);
+  useEffect(() => () => {
+    operationRef.current += 1;
+    void scanner.stop();
+  }, [scanner]);
 
   const start = useCallback(
     (options?: CameraStartOptions) => {
+      const operation = ++operationRef.current;
       setError(null);
       setHistory([]);
-      setScanning(true);
-      scanner.start(options).catch((err: unknown) => {
-        setScanning(false);
-        setError(toError(err));
-      });
+      setResult(null);
+      setStatus("starting");
+      void scanner.start(options).then(
+        () => { if (operationRef.current === operation) setStatus("scanning"); },
+        (err: unknown) => {
+          if (operationRef.current !== operation) return;
+          setError(toError(err));
+          setStatus("error");
+        },
+      );
     },
     [scanner],
   );
 
   const stop = useCallback(() => {
-    setScanning(false);
+    const operation = ++operationRef.current;
+    setStatus("stopping");
     setResult(null);
-    void scanner.stop();
+    void scanner.stop().then(
+      () => { if (operationRef.current === operation) setStatus("idle"); },
+      (err: unknown) => {
+        if (operationRef.current !== operation) return;
+        setError(toError(err));
+        setStatus("error");
+      },
+    );
   }, [scanner]);
 
-  return { scanning, session, result, history, error, start, stop };
+  const switchCamera = useCallback((options: CameraStartOptions) => {
+    const operation = ++operationRef.current;
+    setError(null);
+    setResult(null);
+    setStatus("switching");
+    void (async () => {
+      await scanner.stop();
+      if (operationRef.current !== operation) return;
+      await scanner.start(options);
+      if (operationRef.current === operation) setStatus("scanning");
+    })().catch((err: unknown) => {
+      if (operationRef.current !== operation) return;
+      setError(toError(err));
+      setStatus("error");
+    });
+  }, [scanner]);
+
+  const scanning = status !== "idle" && status !== "error";
+  return { status, scanning, session, result, history, error, start, switchCamera, stop };
 }

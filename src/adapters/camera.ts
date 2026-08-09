@@ -25,6 +25,7 @@ export interface CameraStartOptions {
 export interface CameraSession {
   /** 미리보기용 엘리먼트. UI 가 DOM 에 붙여서 쓴다. */
   readonly preview: HTMLVideoElement;
+  readonly deviceId?: string;
   /** 다음 프레임 한 장. 세션이 끝났으면 null. */
   grab(): Promise<CameraFrame | null>;
   stop(): void;
@@ -41,6 +42,7 @@ class MediaDevicesCameraSession implements CameraSession {
   private wakePendingFrame: (() => void) | null = null;
 
   readonly preview: HTMLVideoElement;
+  readonly deviceId?: string;
   private readonly stream: MediaStream;
   private readonly scanWidth: number;
 
@@ -48,6 +50,7 @@ class MediaDevicesCameraSession implements CameraSession {
     this.preview = preview;
     this.stream = stream;
     this.scanWidth = scanWidth;
+    this.deviceId = stream.getVideoTracks()[0]?.getSettings().deviceId;
 
     const context = this.canvas.getContext("2d", { willReadFrequently: true });
     if (!context) throw new Error("2D 캔버스 컨텍스트를 만들 수 없습니다.");
