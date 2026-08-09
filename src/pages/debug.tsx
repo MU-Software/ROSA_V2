@@ -4,6 +4,7 @@ import { ContextViewer, TopBarController } from "../components/pages/debug/conte
 import { PrinterDebugCard } from "../components/pages/debug/printer";
 import { PlatformDebugCard } from "../components/pages/debug/platform";
 import { QrDebugCard } from "../components/pages/debug/qr";
+import { QrInputDebugCard } from "../components/pages/debug/qrInput";
 import { SerialDebugCard } from "../components/pages/debug/serial";
 import { UsbDebugCard } from "../components/pages/debug/usb";
 import { useAppContext } from "../contexts";
@@ -18,6 +19,7 @@ export const DebugPage: FC = () => {
       <ContextViewer data={{ isTauri, topBarInfo }} />
       <TopBarController />
       <PlatformDebugCard />
+      <QrInputDebugCard />
       <SerialDebugCard />
       <QrDebugCard />
       <UsbDebugCard />
