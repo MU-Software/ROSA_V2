@@ -26,6 +26,7 @@ import { useState, type FC, type FormEvent, type ReactNode } from "react";
 import {
   canFullyRefundOrder,
   canTransitionOrderProductStatus,
+  getPaidOptionExchangeTargets,
   type EntityId,
   type Order,
   type OrderProductRelation,
@@ -38,6 +39,7 @@ import type {
   RefundOrderRequest,
   RegistrationDeskGateway,
 } from "../../../gateways";
+import { PrintPreviewDialog } from "./printPreview";
 import { TicketInfoEditor } from "./ticketInfoEditor";
 
 const PAYMENT_STATUS_PRESENTATION: Record<PaymentHistoryStatus, {
@@ -81,7 +83,15 @@ export const OrderSearchWorkspace: FC<{
   gateway: RegistrationDeskGateway | null;
   children: ReactNode;
   onRegistrationChanged: () => void;
-}> = ({ gateway, children, onRegistrationChanged }) => {
+  onProductSelected: () => void;
+  onProductClosed: () => void;
+}> = ({
+  gateway,
+  children,
+  onRegistrationChanged,
+  onProductSelected,
+  onProductClosed,
+}) => {
   const [query, setQuery] = useState("");
   const [orders, setOrders] = useState<Order[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
@@ -139,12 +149,14 @@ export const OrderSearchWorkspace: FC<{
     event.preventDefault();
     const normalizedQuery = query.trim();
     if (!normalizedQuery || searchMutation.isPending) return;
+    if (selectedProductId) onProductClosed();
     setSelectedOrder(null);
     setSelectedProductId(null);
     searchMutation.mutate(normalizedQuery);
   };
 
   const reset = () => {
+    if (selectedProductId) onProductClosed();
     setQuery("");
     setOrders([]);
     setSelectedOrder(null);
@@ -155,6 +167,16 @@ export const OrderSearchWorkspace: FC<{
   const selectOrder = (order: Order) => {
     setSelectedOrder(order);
     setSelectedProductId(null);
+  };
+
+  const selectProduct = (productId: EntityId) => {
+    setSelectedProductId(productId);
+    onProductSelected();
+  };
+
+  const closeProduct = () => {
+    setSelectedProductId(null);
+    onProductClosed();
   };
 
   const selectedProduct = selectedOrder?.products.find(
@@ -218,7 +240,7 @@ export const OrderSearchWorkspace: FC<{
               <OrderProductDetails
                 order={selectedOrder}
                 product={selectedProduct}
-                onBack={() => setSelectedProductId(null)}
+                onBack={closeProduct}
                 modifying={modifyOptionMutation.isPending}
                 modifyError={modifyOptionMutation.error?.message ?? null}
                 onClearModifyError={modifyOptionMutation.reset}
@@ -245,7 +267,7 @@ export const OrderSearchWorkspace: FC<{
               <OrderDetails
                 order={selectedOrder}
                 onBack={() => setSelectedOrder(null)}
-                onSelectProduct={({ id }) => setSelectedProductId(id)}
+                onSelectProduct={({ id }) => selectProduct(id)}
                 refunding={refundMutation.isPending}
                 refundError={refundMutation.error?.message ?? null}
                 onClearRefundError={refundMutation.reset}
@@ -632,10 +654,15 @@ const OrderProductDetails: FC<{
   const [customResponse, setCustomResponse] = useState("");
   const [statusDialogOpen, setStatusDialogOpen] = useState(false);
   const [ticketInfoEditorOpen, setTicketInfoEditorOpen] = useState(false);
+  const [printPreviewOpen, setPrintPreviewOpen] = useState(false);
   const status = PRODUCT_STATUS_PRESENTATION[product.status];
   const ticket = product.ticket_info;
   const optionsEditable = product.status !== "used" && product.status !== "refunded";
   const ticketInfoEditable = product.status === "paid" || product.status === "used";
+  const exchangeTargetCount = getPaidOptionExchangeTargets(product).length;
+  const printArtifactCount = (product.is_ticket && ticket ? 1 : 0) + exchangeTargetCount;
+  const previewAvailable = printArtifactCount > 0 &&
+    (product.status === "paid" || product.status === "used");
   const nextStatus: OrderProductStatus | null = product.status === "paid"
     ? "used"
     : product.status === "used" ? "paid" : null;
@@ -891,6 +918,33 @@ const OrderProductDetails: FC<{
             </Paper>
           )}
         </Stack>
+
+        {previewAvailable && (
+          <Stack spacing={1}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>출력물</Typography>
+            <Paper variant="outlined" sx={{ p: 2 }}>
+              <Stack
+                direction={{ xs: "column", sm: "row" }}
+                spacing={1.5}
+                sx={{ alignItems: { xs: "stretch", sm: "center" }, justifyContent: "space-between" }}
+              >
+                <Box>
+                  <Typography sx={{ fontWeight: 600 }}>출력물 {printArtifactCount}장</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    명찰 {product.is_ticket && ticket ? 1 : 0}장 · 유료 옵션 교환권 {exchangeTargetCount}장
+                  </Typography>
+                </Box>
+                <Button
+                  variant="outlined"
+                  disabled={busy}
+                  onClick={() => setPrintPreviewOpen(true)}
+                >
+                  미리보기
+                </Button>
+              </Stack>
+            </Paper>
+          </Stack>
+        )}
       </Stack>
 
       <Dialog open={statusDialogOpen} onClose={closeStatusDialog} fullWidth maxWidth="xs">
@@ -922,6 +976,12 @@ const OrderProductDetails: FC<{
           error={ticketInfoError}
           onClose={closeTicketInfoEditor}
           onSave={onModifyTicketInfo}
+        />
+      )}
+      {printPreviewOpen && (
+        <PrintPreviewDialog
+          product={product}
+          onClose={() => setPrintPreviewOpen(false)}
         />
       )}
     </Stack>

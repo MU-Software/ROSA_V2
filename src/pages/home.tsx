@@ -191,10 +191,14 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
               overflow: "hidden",
             }}
           >
-            {registrationState === "idle" ? (
+            {registrationState === "idle" || registrationState === "registering" ? (
               <OrderSearchWorkspace
                 gateway={gateway}
                 onRegistrationChanged={() => refreshStatistics()}
+                onProductSelected={() => setRegistrationState((current) =>
+                  current === "idle" ? transitionRegistration(current, "registering") : current)}
+                onProductClosed={() => setRegistrationState((current) =>
+                  current === "registering" ? transitionRegistration(current, "idle") : current)}
               >
                 {qrInputMode === "camera" ? (
                   <MobileCameraInput scanner={scanner} />
