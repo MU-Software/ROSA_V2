@@ -1,7 +1,9 @@
 use crate::error::{CommandError, CommandResult};
 use serde::Serialize;
-use serialport::{available_ports, SerialPort, SerialPortType};
+use serialport::{available_ports, SerialPort, SerialPortInfo, SerialPortType};
 use std::collections::HashMap;
+#[cfg(target_os = "macos")]
+use std::collections::HashSet;
 use std::io::{ErrorKind, Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -60,11 +62,33 @@ pub struct SerialState {
     ports: Mutex<HashMap<String, OpenPort>>,
 }
 
+#[cfg(target_os = "macos")]
+fn prefer_callout_ports(ports: Vec<SerialPortInfo>) -> Vec<SerialPortInfo> {
+    let callout_suffixes = ports
+        .iter()
+        .filter_map(|port| port.port_name.strip_prefix("/dev/cu."))
+        .map(str::to_owned)
+        .collect::<HashSet<_>>();
+
+    ports
+        .into_iter()
+        .filter(|port| match port.port_name.strip_prefix("/dev/tty.") {
+            Some(suffix) => !callout_suffixes.contains(suffix),
+            None => true,
+        })
+        .collect()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn prefer_callout_ports(ports: Vec<SerialPortInfo>) -> Vec<SerialPortInfo> {
+    ports
+}
+
 #[tauri::command]
 pub fn serial_list_ports() -> CommandResult<Vec<PortInfo>> {
     let ports = available_ports()
         .map_err(|e| CommandError::serial("시리얼 포트 열거에 실패했습니다", e, "unavailable"))?;
-    Ok(ports
+    Ok(prefer_callout_ports(ports)
         .into_iter()
         .map(|p| {
             let (port_type, manufacturer, product, serial_number, vid, pid) = match &p.port_type {
