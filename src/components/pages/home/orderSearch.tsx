@@ -20,6 +20,7 @@ import {
 import { useMutation } from "@tanstack/react-query";
 import { useState, type FC, type FormEvent, type ReactNode } from "react";
 import type {
+  EntityId,
   Order,
   OrderProductRelation,
   OrderProductStatus,
@@ -70,6 +71,7 @@ export const OrderSearchWorkspace: FC<{
 }> = ({ gateway, children }) => {
   const [query, setQuery] = useState("");
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [selectedProductId, setSelectedProductId] = useState<EntityId | null>(null);
   const searchMutation = useMutation({
     mutationFn: async (searchQuery: string) => {
       if (!gateway) throw new Error("주문 검색 gateway가 준비되지 않았습니다.");
@@ -84,14 +86,25 @@ export const OrderSearchWorkspace: FC<{
     const normalizedQuery = query.trim();
     if (!normalizedQuery || searchMutation.isPending) return;
     setSelectedOrder(null);
+    setSelectedProductId(null);
     searchMutation.mutate(normalizedQuery);
   };
 
   const reset = () => {
     setQuery("");
     setSelectedOrder(null);
+    setSelectedProductId(null);
     searchMutation.reset();
   };
+
+  const selectOrder = (order: Order) => {
+    setSelectedOrder(order);
+    setSelectedProductId(null);
+  };
+
+  const selectedProduct = selectedOrder?.products.find(
+    ({ id }) => id === selectedProductId,
+  ) ?? null;
 
   return (
     <Stack sx={{ flex: 1, minHeight: 0 }}>
@@ -146,13 +159,23 @@ export const OrderSearchWorkspace: FC<{
                 <Alert severity="error">{searchMutation.error.message}</Alert>
                 <Button variant="outlined" onClick={() => searchMutation.mutate(query.trim())}>다시 검색</Button>
               </Stack>
+            ) : selectedOrder && selectedProduct ? (
+              <OrderProductDetails
+                order={selectedOrder}
+                product={selectedProduct}
+                onBack={() => setSelectedProductId(null)}
+              />
             ) : selectedOrder ? (
-              <OrderDetails order={selectedOrder} onBack={() => setSelectedOrder(null)} />
+              <OrderDetails
+                order={selectedOrder}
+                onBack={() => setSelectedOrder(null)}
+                onSelectProduct={({ id }) => setSelectedProductId(id)}
+              />
             ) : (
               <OrderSearchResults
                 orders={searchMutation.data ?? []}
                 onReset={reset}
-                onSelect={setSelectedOrder}
+                onSelect={selectOrder}
               />
             )}
           </Box>
@@ -250,7 +273,11 @@ const OrderSearchResult: FC<{ order: Order; onSelect: () => void }> = ({ order, 
   );
 };
 
-const OrderDetails: FC<{ order: Order; onBack: () => void }> = ({ order, onBack }) => {
+const OrderDetails: FC<{
+  order: Order;
+  onBack: () => void;
+  onSelectProduct: (product: OrderProductRelation) => void;
+}> = ({ order, onBack, onSelectProduct }) => {
   const payment = PAYMENT_STATUS_PRESENTATION[order.current_status];
   const customer = order.customer_info;
 
@@ -342,7 +369,11 @@ const OrderDetails: FC<{ order: Order; onBack: () => void }> = ({ order, onBack 
             주문상품 {order.products.length}개
           </Typography>
           {order.products.map((product) => (
-            <OrderProductSummary key={product.id} product={product} />
+            <OrderProductSummary
+              key={product.id}
+              product={product}
+              onSelect={() => onSelectProduct(product)}
+            />
           ))}
         </Stack>
       </Stack>
@@ -357,7 +388,10 @@ const DetailValue: FC<{ label: string; value: string }> = ({ label, value }) => 
   </Box>
 );
 
-const OrderProductSummary: FC<{ product: OrderProductRelation }> = ({ product }) => {
+const OrderProductSummary: FC<{
+  product: OrderProductRelation;
+  onSelect: () => void;
+}> = ({ product, onSelect }) => {
   const status = PRODUCT_STATUS_PRESENTATION[product.status];
 
   return (
@@ -384,30 +418,133 @@ const OrderProductSummary: FC<{ product: OrderProductRelation }> = ({ product })
           </Typography>
         )}
 
-        {product.options.length > 0 && (
-          <Stack spacing={0.75}>
-            {product.options.map((option) => (
-              <Stack
-                key={option.id}
-                direction={{ xs: "column", sm: "row" }}
-                spacing={{ xs: 0, sm: 1 }}
-                sx={{ justifyContent: "space-between" }}
-              >
-                <Typography variant="body2" color="text.secondary">
-                  {option.product_option_group.name}
-                </Typography>
-                <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                  {option.custom_response ?? option.product_option?.name ?? "선택 없음"}
-                </Typography>
-              </Stack>
-            ))}
-          </Stack>
-        )}
+        <Typography variant="body2" color="text.secondary">
+          {product.is_ticket ? "티켓 상품" : "일반 상품"} · 옵션 {product.options.length}개
+        </Typography>
 
         {product.not_refundable_reason && (
           <Alert severity="warning">{product.not_refundable_reason}</Alert>
         )}
+
+        <Button variant="outlined" size="small" onClick={onSelect} sx={{ alignSelf: "flex-end" }}>
+          주문상품 상세
+        </Button>
       </Stack>
     </Paper>
+  );
+};
+
+const OrderProductDetails: FC<{
+  order: Order;
+  product: OrderProductRelation;
+  onBack: () => void;
+}> = ({ order, product, onBack }) => {
+  const status = PRODUCT_STATUS_PRESENTATION[product.status];
+  const ticket = product.ticket_info;
+
+  return (
+    <Stack sx={{ minHeight: 0 }}>
+      <Stack
+        direction="row"
+        spacing={1}
+        sx={{ px: { xs: 1.5, md: 2 }, py: 1, alignItems: "center" }}
+      >
+        <Button size="small" startIcon={<ArrowBack />} onClick={onBack}>주문 상세</Button>
+      </Stack>
+      <Divider />
+
+      <Stack spacing={3} sx={{ p: { xs: 2, md: 3 }, overflowY: "auto" }}>
+        <Stack spacing={1}>
+          <Typography variant="caption" color="text.secondary">{order.name}</Typography>
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            spacing={1}
+            sx={{ alignItems: { xs: "flex-start", sm: "center" }, justifyContent: "space-between" }}
+          >
+            <Box sx={{ minWidth: 0 }}>
+              <Typography variant="h6" sx={{ fontWeight: 700 }}>{product.product.name}</Typography>
+              <Typography variant="caption" color="text.secondary">{product.id}</Typography>
+            </Box>
+            <Stack direction="row" spacing={0.75}>
+              <Chip size="small" variant="outlined" label={product.is_ticket ? "티켓" : "일반 상품"} />
+              <Chip size="small" color={status.color} label={status.label} />
+            </Stack>
+          </Stack>
+
+          <Stack direction="row" spacing={3} useFlexGap sx={{ flexWrap: "wrap" }}>
+            <DetailValue label="상품 금액" value={formatPrice(product.price)} />
+            <DetailValue label="기부금" value={formatPrice(product.donation_price)} />
+          </Stack>
+
+          {product.not_refundable_reason && (
+            <Alert severity="warning">{product.not_refundable_reason}</Alert>
+          )}
+        </Stack>
+
+        {ticket && (
+          <Stack spacing={1}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>참가자 정보</Typography>
+            <Paper variant="outlined" sx={{ p: 2 }}>
+              <Typography>{ticket.name}</Typography>
+              {ticket.organization && (
+                <Typography variant="body2" color="text.secondary">{ticket.organization}</Typography>
+              )}
+              <Typography variant="body2" color="text.secondary">
+                {[ticket.email, ticket.phone].filter(Boolean).join(" · ")}
+              </Typography>
+              {ticket.contribution_message && (
+                <Typography variant="body2" sx={{ mt: 1.5 }}>
+                  {ticket.contribution_message}
+                </Typography>
+              )}
+            </Paper>
+          </Stack>
+        )}
+
+        <Stack spacing={1}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+            상품 옵션 {product.options.length}개
+          </Typography>
+          {product.options.length === 0 ? (
+            <Alert severity="info">선택된 상품 옵션이 없습니다.</Alert>
+          ) : (
+            <Paper variant="outlined" sx={{ overflow: "hidden" }}>
+              <Stack divider={<Divider flexItem />}>
+                {product.options.map((option) => {
+                  const value = option.custom_response ?? option.product_option?.name ?? "선택 없음";
+                  const additionalPrice = option.product_option?.additional_price ?? 0;
+
+                  return (
+                    <Stack
+                      key={option.id}
+                      direction={{ xs: "column", sm: "row" }}
+                      spacing={1}
+                      sx={{ p: 1.5, justifyContent: "space-between" }}
+                    >
+                      <Box>
+                        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                          {option.product_option_group.name}
+                        </Typography>
+                        {option.product_option_group.is_custom_response && (
+                          <Typography variant="caption" color="text.secondary">직접 응답</Typography>
+                        )}
+                      </Box>
+                      <Box sx={{ textAlign: { xs: "left", sm: "right" } }}>
+                        <Typography variant="body2">{value}</Typography>
+                        {additionalPrice > 0 && (
+                          <Typography variant="caption" color="text.secondary">
+                            추가 {formatPrice(additionalPrice)}
+                          </Typography>
+                        )}
+                      </Box>
+                    </Stack>
+                  );
+                })}
+              </Stack>
+            </Paper>
+          )}
+        </Stack>
+      </Stack>
+    </Stack>
   );
 };
