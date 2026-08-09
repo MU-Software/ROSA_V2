@@ -1,4 +1,5 @@
 import type { SerialWorkerInbound, SerialWorkerOutbound } from "./serialProtocol";
+import { toMessage } from "../utils/bytes";
 
 class SerialWorkerBridge {
   private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
@@ -90,7 +91,7 @@ class SerialWorkerBridge {
       type: "error",
       payload: {
         message,
-        cause: error === undefined ? undefined : error instanceof Error ? error.message : String(error),
+        cause: error === undefined ? undefined : toMessage(error),
       },
     });
   }

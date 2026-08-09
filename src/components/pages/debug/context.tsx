@@ -9,7 +9,7 @@ import { useTopBar } from "../../../contexts";
 
 export const ContextViewer: FC<{ data: object }> = ({ data }) => (
   <DebugCard title="App Context">
-    <pre>{JSON.stringify(data, (key, value) => (key === "rightActionButtons" ? "[ReactNode]" : value), 2)}</pre>
+    <pre>{JSON.stringify(data, (key: string, value: unknown): unknown => (key === "rightActionButtons" ? "[ReactNode]" : value), 2)}</pre>
   </DebugCard>
 );
 

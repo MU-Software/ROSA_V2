@@ -29,7 +29,7 @@ export function createDisconnectSignal() {
   let disconnected: TransportError | undefined;
 
   return {
-    onDisconnect(listener: (error: TransportError) => void): () => void {
+    onDisconnect: (listener: (error: TransportError) => void): (() => void) => {
       listeners.add(listener);
       if (disconnected) queueMicrotask(() => listener(disconnected!));
       return () => { listeners.delete(listener); };

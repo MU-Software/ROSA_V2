@@ -27,7 +27,7 @@ export function supportsTransferableStreams(): boolean {
   try {
     const stream = new ReadableStream();
     const channel = new MessageChannel();
-    channel.port1.postMessage(stream, [stream as unknown as Transferable]);
+    channel.port1.postMessage(stream, [stream]);
     channel.port1.close();
     channel.port2.close();
     cachedSupport = true;

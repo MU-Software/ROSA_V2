@@ -1,4 +1,5 @@
 import type { SerialAdapter } from "../adapters";
+import { toMessage } from "../utils/bytes";
 
 const UUID4_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i;
 
@@ -59,7 +60,7 @@ export function readNextFrame(
       signal.removeEventListener("abort", onAbort);
       try { await reader.cancel(); } catch { /* 이미 종료됨 */ }
       try { reader.releaseLock(); } catch { /* 이미 해제됨 */ }
-      if (err) reject(err instanceof Error ? err : new Error(String(err)));
+      if (err) reject(err instanceof Error ? err : new Error(toMessage(err)));
       else resolve(value);
     };
 

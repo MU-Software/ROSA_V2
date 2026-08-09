@@ -204,7 +204,7 @@ export class PrinterManager {
   // ---------- 기기 ----------
 
   canRequestDevice(): boolean {
-    return this.transports.some((transport) => transport.request);
+    return this.transports.some((transport) => transport.request !== undefined);
   }
 
   listDevices(): PrinterDevice[] {

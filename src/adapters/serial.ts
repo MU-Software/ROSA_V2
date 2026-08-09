@@ -58,8 +58,8 @@ class TauriSerialAdapter implements SerialAdapter {
     }));
   }
 
-  async requestPort(): Promise<PortInfo | null> {
-    return null;
+  requestPort(): Promise<PortInfo | null> {
+    return Promise.resolve(null);
   }
 
   async open(path: string, baudRate: number): Promise<void> {
@@ -196,10 +196,10 @@ export class WebSerialAdapter implements SerialAdapter {
 }
 
 class UnsupportedSerialAdapter implements SerialAdapter {
-  async listPorts(): Promise<PortInfo[]> { return []; }
-  async requestPort(): Promise<PortInfo | null> { return null; }
-  async open(): Promise<void> { throw new TransportError("unsupported", "이 플랫폼은 시리얼 장치를 지원하지 않습니다"); }
-  async close(): Promise<void> { /* 열린 장치가 없다. */ }
+  listPorts(): Promise<PortInfo[]> { return Promise.resolve([]); }
+  requestPort(): Promise<PortInfo | null> { return Promise.resolve(null); }
+  open(): Promise<void> { return Promise.reject(new TransportError("unsupported", "이 플랫폼은 시리얼 장치를 지원하지 않습니다")); }
+  close(): Promise<void> { return Promise.resolve(); }
   getReadable(): ReadableStream<Uint8Array> { throw new TransportError("unsupported", "이 플랫폼은 시리얼 장치를 지원하지 않습니다"); }
   getWritable(): WritableStream<Uint8Array> { throw new TransportError("unsupported", "이 플랫폼은 시리얼 장치를 지원하지 않습니다"); }
 }

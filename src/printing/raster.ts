@@ -29,7 +29,7 @@ export function drawImageData(
 }
 
 export async function canvasToRcptImage(canvas: HTMLCanvasElement | OffscreenCanvas): Promise<RcptImage> {
-  const context = canvas.getContext("2d") as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+  const context = canvas.getContext("2d");
   if (!context) throw new Error("캔버스의 2D 컨텍스트를 얻지 못했습니다");
 
   const source = context.getImageData(0, 0, canvas.width, canvas.height);

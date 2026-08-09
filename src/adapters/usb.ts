@@ -89,8 +89,8 @@ class TauriUsbAdapter implements UsbAdapter {
     }));
   }
 
-  async requestDevice(): Promise<UsbDeviceInfo | null> {
-    return null;
+  requestDevice(): Promise<UsbDeviceInfo | null> {
+    return Promise.resolve(null);
   }
 }
 
@@ -110,8 +110,8 @@ class WebUsbAdapter implements UsbAdapter {
 }
 
 class UnsupportedUsbAdapter implements UsbAdapter {
-  async listDevices(): Promise<UsbDeviceInfo[]> { return []; }
-  async requestDevice(): Promise<UsbDeviceInfo | null> { return null; }
+  listDevices(): Promise<UsbDeviceInfo[]> { return Promise.resolve([]); }
+  requestDevice(): Promise<UsbDeviceInfo | null> { return Promise.resolve(null); }
 }
 
 const toDeviceInfo = (d: USBDevice): UsbDeviceInfo => ({
