@@ -9,6 +9,10 @@ import {
   Button,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Divider,
   IconButton,
   Paper,
@@ -19,15 +23,18 @@ import {
 } from "@mui/material";
 import { useMutation } from "@tanstack/react-query";
 import { useState, type FC, type FormEvent, type ReactNode } from "react";
-import type {
-  EntityId,
-  Order,
-  OrderProductRelation,
-  OrderProductStatus,
-  PaymentHistoryStatus,
+import {
+  canFullyRefundOrder,
+  canTransitionOrderProductStatus,
+  type EntityId,
+  type Order,
+  type OrderProductRelation,
+  type OrderProductStatus,
+  type PaymentHistoryStatus,
 } from "../../../domain";
 import type {
   ModifyOrderProductRequest,
+  RefundOrderRequest,
   RegistrationDeskGateway,
 } from "../../../gateways";
 
@@ -71,11 +78,17 @@ const formatPrice = (value: number): string => new Intl.NumberFormat("ko-KR", {
 export const OrderSearchWorkspace: FC<{
   gateway: RegistrationDeskGateway | null;
   children: ReactNode;
-}> = ({ gateway, children }) => {
+  onRegistrationChanged: () => void;
+}> = ({ gateway, children, onRegistrationChanged }) => {
   const [query, setQuery] = useState("");
   const [orders, setOrders] = useState<Order[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [selectedProductId, setSelectedProductId] = useState<EntityId | null>(null);
+  const updateOrder = (updatedOrder: Order) => {
+    setOrders((current) => current.map((order) =>
+      order.id === updatedOrder.id ? updatedOrder : order));
+    setSelectedOrder(updatedOrder);
+  };
   const searchMutation = useMutation({
     mutationFn: async (searchQuery: string) => {
       if (!gateway) throw new Error("주문 검색 gateway가 준비되지 않았습니다.");
@@ -83,15 +96,31 @@ export const OrderSearchWorkspace: FC<{
     },
     onSuccess: setOrders,
   });
-  const modifyProductMutation = useMutation({
+  const modifyOptionMutation = useMutation({
+    mutationFn: async (request: ModifyOrderProductRequest) => {
+      if (!gateway) throw new Error("주문상품 수정 gateway가 준비되지 않았습니다.");
+      return gateway.modifyOrderProduct(request);
+    },
+    onSuccess: updateOrder,
+  });
+  const modifyStatusMutation = useMutation({
     mutationFn: async (request: ModifyOrderProductRequest) => {
       if (!gateway) throw new Error("주문상품 수정 gateway가 준비되지 않았습니다.");
       return gateway.modifyOrderProduct(request);
     },
     onSuccess: (updatedOrder) => {
-      setOrders((current) => current.map((order) =>
-        order.id === updatedOrder.id ? updatedOrder : order));
-      setSelectedOrder(updatedOrder);
+      updateOrder(updatedOrder);
+      onRegistrationChanged();
+    },
+  });
+  const refundMutation = useMutation({
+    mutationFn: async (request: RefundOrderRequest) => {
+      if (!gateway) throw new Error("주문 환불 gateway가 준비되지 않았습니다.");
+      return gateway.refundOrder(request);
+    },
+    onSuccess: (updatedOrder) => {
+      updateOrder(updatedOrder);
+      onRegistrationChanged();
     },
   });
   const hasSearched = searchMutation.status !== "idle";
@@ -181,12 +210,19 @@ export const OrderSearchWorkspace: FC<{
                 order={selectedOrder}
                 product={selectedProduct}
                 onBack={() => setSelectedProductId(null)}
-                modifying={modifyProductMutation.isPending}
-                modifyError={modifyProductMutation.error?.message ?? null}
-                onClearModifyError={modifyProductMutation.reset}
-                onModifyOption={(optionId, customResponse) => modifyProductMutation.mutateAsync({
+                modifying={modifyOptionMutation.isPending}
+                modifyError={modifyOptionMutation.error?.message ?? null}
+                onClearModifyError={modifyOptionMutation.reset}
+                onModifyOption={(optionId, customResponse) => modifyOptionMutation.mutateAsync({
                   order_product_relation_id: selectedProduct.id,
                   options: [{ id: optionId, custom_response: customResponse }],
+                })}
+                statusChanging={modifyStatusMutation.isPending}
+                statusError={modifyStatusMutation.error?.message ?? null}
+                onClearStatusError={modifyStatusMutation.reset}
+                onChangeStatus={(nextStatus) => modifyStatusMutation.mutateAsync({
+                  order_product_relation_id: selectedProduct.id,
+                  status: nextStatus,
                 })}
               />
             ) : selectedOrder ? (
@@ -194,6 +230,10 @@ export const OrderSearchWorkspace: FC<{
                 order={selectedOrder}
                 onBack={() => setSelectedOrder(null)}
                 onSelectProduct={({ id }) => setSelectedProductId(id)}
+                refunding={refundMutation.isPending}
+                refundError={refundMutation.error?.message ?? null}
+                onClearRefundError={refundMutation.reset}
+                onRefund={(otp) => refundMutation.mutateAsync({ order_id: selectedOrder.id, otp })}
               />
             ) : (
               <OrderSearchResults
@@ -301,9 +341,47 @@ const OrderDetails: FC<{
   order: Order;
   onBack: () => void;
   onSelectProduct: (product: OrderProductRelation) => void;
-}> = ({ order, onBack, onSelectProduct }) => {
+  refunding: boolean;
+  refundError: string | null;
+  onClearRefundError: () => void;
+  onRefund: (otp: string) => Promise<Order>;
+}> = ({
+  order,
+  onBack,
+  onSelectProduct,
+  refunding,
+  refundError,
+  onClearRefundError,
+  onRefund,
+}) => {
+  const [refundDialogOpen, setRefundDialogOpen] = useState(false);
+  const [refundOtp, setRefundOtp] = useState("");
   const payment = PAYMENT_STATUS_PRESENTATION[order.current_status];
   const customer = order.customer_info;
+  const refundable = canFullyRefundOrder(order);
+
+  const openRefundDialog = () => {
+    onClearRefundError();
+    setRefundOtp("");
+    setRefundDialogOpen(true);
+  };
+
+  const closeRefundDialog = () => {
+    if (refunding) return;
+    onClearRefundError();
+    setRefundDialogOpen(false);
+    setRefundOtp("");
+  };
+
+  const refund = async () => {
+    try {
+      await onRefund(refundOtp.trim());
+    } catch {
+      return;
+    }
+    setRefundDialogOpen(false);
+    setRefundOtp("");
+  };
 
   return (
     <Stack sx={{ minHeight: 0 }}>
@@ -343,6 +421,16 @@ const OrderDetails: FC<{
           </Box>
           {order.not_fully_refundable_reason && (
             <Alert severity="warning">{order.not_fully_refundable_reason}</Alert>
+          )}
+          {refundable && (
+            <Button
+              variant="outlined"
+              color="error"
+              onClick={openRefundDialog}
+              sx={{ alignSelf: "flex-end" }}
+            >
+              주문 전체 환불
+            </Button>
           )}
         </Stack>
 
@@ -401,6 +489,39 @@ const OrderDetails: FC<{
           ))}
         </Stack>
       </Stack>
+
+      <Dialog open={refundDialogOpen} onClose={closeRefundDialog} fullWidth maxWidth="xs">
+        <DialogTitle>주문 전체 환불</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 0.5 }}>
+            <Typography variant="body2">
+              {order.name}의 모든 주문상품을 환불합니다. 계속하려면 관리자 OTP를 입력해주세요.
+            </Typography>
+            {refundError && <Alert severity="error">{refundError}</Alert>}
+            <TextField
+              autoFocus
+              fullWidth
+              label="관리자 OTP"
+              type="password"
+              value={refundOtp}
+              disabled={refunding}
+              slotProps={{ htmlInput: { inputMode: "numeric", autoComplete: "one-time-code" } }}
+              onChange={(event) => setRefundOtp(event.target.value)}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button disabled={refunding} onClick={closeRefundDialog}>취소</Button>
+          <Button
+            variant="contained"
+            color="error"
+            disabled={refunding || !refundOtp.trim()}
+            onClick={() => void refund()}
+          >
+            {refunding ? "환불 중…" : "전체 환불"}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Stack>
   );
 };
@@ -466,6 +587,10 @@ const OrderProductDetails: FC<{
   modifyError: string | null;
   onClearModifyError: () => void;
   onModifyOption: (optionId: EntityId, customResponse: string | null) => Promise<Order>;
+  statusChanging: boolean;
+  statusError: string | null;
+  onClearStatusError: () => void;
+  onChangeStatus: (nextStatus: OrderProductStatus) => Promise<Order>;
 }> = ({
   order,
   product,
@@ -474,12 +599,26 @@ const OrderProductDetails: FC<{
   modifyError,
   onClearModifyError,
   onModifyOption,
+  statusChanging,
+  statusError,
+  onClearStatusError,
+  onChangeStatus,
 }) => {
   const [editingOptionId, setEditingOptionId] = useState<EntityId | null>(null);
   const [customResponse, setCustomResponse] = useState("");
+  const [statusDialogOpen, setStatusDialogOpen] = useState(false);
   const status = PRODUCT_STATUS_PRESENTATION[product.status];
   const ticket = product.ticket_info;
   const optionsEditable = product.status !== "used" && product.status !== "refunded";
+  const nextStatus: OrderProductStatus | null = product.status === "paid"
+    ? "used"
+    : product.status === "used" ? "paid" : null;
+  const statusChangeAllowed = nextStatus !== null && canTransitionOrderProductStatus(
+    product.status,
+    nextStatus,
+  );
+  const statusActionLabel = nextStatus === "used" ? "사용 처리" : "사용 취소";
+  const busy = modifying || statusChanging;
 
   const beginOptionEdit = (optionId: EntityId, value: string | null) => {
     onClearModifyError();
@@ -502,6 +641,27 @@ const OrderProductDetails: FC<{
     }
     setEditingOptionId(null);
     setCustomResponse("");
+  };
+
+  const openStatusDialog = () => {
+    onClearStatusError();
+    setStatusDialogOpen(true);
+  };
+
+  const closeStatusDialog = () => {
+    if (statusChanging) return;
+    onClearStatusError();
+    setStatusDialogOpen(false);
+  };
+
+  const changeStatus = async () => {
+    if (!nextStatus) return;
+    try {
+      await onChangeStatus(nextStatus);
+    } catch {
+      return;
+    }
+    setStatusDialogOpen(false);
   };
 
   return (
@@ -542,6 +702,36 @@ const OrderProductDetails: FC<{
             <Alert severity="warning">{product.not_refundable_reason}</Alert>
           )}
         </Stack>
+
+        {statusChangeAllowed && (
+          <Stack spacing={1}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>주문상품 작업</Typography>
+            <Paper variant="outlined" sx={{ p: 2 }}>
+              <Stack
+                direction={{ xs: "column", sm: "row" }}
+                spacing={1.5}
+                sx={{ alignItems: { xs: "stretch", sm: "center" }, justifyContent: "space-between" }}
+              >
+                <Box>
+                  <Typography sx={{ fontWeight: 600 }}>{statusActionLabel}</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {nextStatus === "used"
+                      ? "현장에서 상품 제공을 확인한 뒤 사용 완료로 변경합니다."
+                      : "잘못 처리한 상품을 사용 대기 상태로 되돌립니다."}
+                  </Typography>
+                </Box>
+                <Button
+                  variant={nextStatus === "used" ? "contained" : "outlined"}
+                  color={nextStatus === "used" ? "primary" : "warning"}
+                  disabled={busy || editingOptionId !== null}
+                  onClick={openStatusDialog}
+                >
+                  {statusActionLabel}
+                </Button>
+              </Stack>
+            </Paper>
+          </Stack>
+        )}
 
         {ticket && (
           <Stack spacing={1}>
@@ -595,16 +785,16 @@ const OrderProductDetails: FC<{
                           size="small"
                           label="응답"
                           value={customResponse}
-                          disabled={modifying}
+                          disabled={busy}
                           required={responseRequired}
                           onChange={(event) => setCustomResponse(event.target.value)}
                         />
                         <Stack direction="row" spacing={1} sx={{ justifyContent: "flex-end" }}>
-                          <Button size="small" disabled={modifying} onClick={cancelOptionEdit}>취소</Button>
+                          <Button size="small" disabled={busy} onClick={cancelOptionEdit}>취소</Button>
                           <Button
                             size="small"
                             variant="contained"
-                            disabled={modifying || (responseRequired && !customResponse.trim())}
+                            disabled={busy || (responseRequired && !customResponse.trim())}
                             onClick={() => void saveOption(option.id)}
                           >
                             {modifying ? "저장 중…" : "저장"}
@@ -639,7 +829,7 @@ const OrderProductDetails: FC<{
                         {customResponseOption && optionsEditable && (
                           <Button
                             size="small"
-                            disabled={modifying}
+                            disabled={busy}
                             onClick={() => beginOptionEdit(option.id, option.custom_response)}
                             sx={{ mt: 0.5 }}
                           >
@@ -655,6 +845,29 @@ const OrderProductDetails: FC<{
           )}
         </Stack>
       </Stack>
+
+      <Dialog open={statusDialogOpen} onClose={closeStatusDialog} fullWidth maxWidth="xs">
+        <DialogTitle>{statusActionLabel}</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 0.5 }}>
+            <Typography variant="body2">
+              {product.product.name}을(를) {statusActionLabel}하시겠습니까?
+            </Typography>
+            {statusError && <Alert severity="error">{statusError}</Alert>}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button disabled={statusChanging} onClick={closeStatusDialog}>취소</Button>
+          <Button
+            variant="contained"
+            color={nextStatus === "used" ? "primary" : "warning"}
+            disabled={statusChanging}
+            onClick={() => void changeStatus()}
+          >
+            {statusChanging ? "처리 중…" : statusActionLabel}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Stack>
   );
 };
