@@ -36,6 +36,7 @@ export const GOOJPRT_PT390: PrinterProfile = {
       pace: { bytes: 8192, pauseMs: 300 },
     },
   },
+  labelSizeSource: "manual",
   headDots: PT390_MAX_DOTS,
   dotsPerMm: 8,
   completionProbe: { request: HEALTH_REQUEST, length: HEALTH_LENGTH, intervalMs: 400 },

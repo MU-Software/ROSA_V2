@@ -13,6 +13,12 @@ export function usePrinterDevices(): PrinterDevice[] {
   return devices;
 }
 
+export function useRegisteredPrinterDevices(): PrinterDevice[] {
+  const [devices, setDevices] = useState<PrinterDevice[]>(() => printerManager.listRegisteredDevices());
+  useEffect(() => printerManager.onChange(() => setDevices(printerManager.listRegisteredDevices())), []);
+  return devices;
+}
+
 export function usePrinterConnection(key: string): PrinterConnection | undefined {
   const [connection, setConnection] = useState(() => printerManager.getConnection(key));
   useEffect(() => {

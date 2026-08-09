@@ -73,6 +73,8 @@ export type PrinterProfile = {
   id: string;
   name: string;
   links: PrinterLinks;
+  /** 라벨 크기를 장치에서 읽는 기종은 UI에서 수동 변경을 막는다. */
+  labelSizeSource: "device" | "manual";
   actions?: PrinterAction[];
   /** 없으면 보낸 것까지만 보고한다. */
   completionProbe?: CompletionProbe;

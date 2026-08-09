@@ -15,11 +15,18 @@ import { RcptImage } from "../printing/receipet";
 import { toMessage } from "../utils/bytes";
 
 const SETTINGS_STORAGE_KEY = "rosa.printer.settings";
-const SETTINGS_STORAGE_VERSION = 3;
+const SETTINGS_STORAGE_VERSION = 4;
+const REGISTRATION_STORAGE_KEY = "rosa.printer.registrations";
+const REGISTRATION_STORAGE_VERSION = 1;
+
+export const PRINT_PADDING_MM_OPTIONS = [0.5, 1, 1.5, 2] as const;
+export const DEFAULT_PRINT_PADDING_MM = 1;
 
 /** 프린터가 스스로 알려주지 못해 사용자가 정해야 하는 값들. 물리 장치 단위로 저장한다. */
 export type PrinterSettings = {
   label?: LabelSpec;
+  /** 라벨 가장자리부터 실제 이미지까지 확보할 안전 여백. */
+  paddingMm?: number;
   /** 눈금자로 보정한 값. */
   rightMarginDots?: number;
 };
@@ -31,7 +38,7 @@ type StoredPrinterSettings = {
   legacyProfiles: Record<string, PrinterSettings>;
 };
 
-type LegacyStoredPrinterSettings = Omit<StoredPrinterSettings, "version"> & { version: 2 };
+type LegacyStoredPrinterSettings = Omit<StoredPrinterSettings, "version"> & { version: 2 | 3 };
 
 export type PrinterDevice = DiscoveredDevice & {
   profile?: PrinterProfile;
@@ -57,6 +64,22 @@ export type PrinterConnectionStatus =
 export type PrinterState = {
   status: PrinterConnectionStatus;
   error?: TransportError;
+};
+
+export type PrinterRestoreFailure = {
+  device: PrinterDevice;
+  reason: string;
+};
+
+export type PrinterRestoreSkipped = {
+  device: PrinterDevice;
+  reason: string;
+};
+
+export type PrinterRestoreResult = {
+  connected: PrinterConnection[];
+  failed: PrinterRestoreFailure[];
+  skipped: PrinterRestoreSkipped[];
 };
 
 /** `sending` 은 바이트를 넘기는 중, `printing` 은 프린터가 소화하는 중. */
@@ -86,6 +109,7 @@ const optionalFiniteNumber = (value: unknown): value is number | undefined =>
 const parsePrinterSettings = (value: unknown): PrinterSettings | undefined => {
   if (!isRecord(value)) return undefined;
   if (!optionalFiniteNumber(value.rightMarginDots)) return undefined;
+  if (!optionalFiniteNumber(value.paddingMm)) return undefined;
 
   let label: LabelSpec | undefined;
   if (value.label !== undefined) {
@@ -98,6 +122,7 @@ const parsePrinterSettings = (value: unknown): PrinterSettings | undefined => {
 
   return {
     ...(label ? { label } : {}),
+    ...(value.paddingMm === undefined ? {} : { paddingMm: value.paddingMm }),
     ...(value.rightMarginDots === undefined ? {} : { rightMarginDots: value.rightMarginDots }),
   };
 };
@@ -129,11 +154,14 @@ export class PrinterManager {
   private states = new Map<string, PrinterState>();
   private settings: Record<string, PrinterSettings> = {};
   private legacyProfileSettings: Record<string, PrinterSettings> = {};
+  private registrations = new Set<string>();
   private changeListeners = new Set<() => void>();
+  private refreshing?: Promise<PrinterDevice[]>;
 
   constructor(transports: DeviceTransport[] = createPrinterTransports()) {
     this.transports = transports;
     this.loadSettings();
+    this.loadRegistrations();
   }
 
   // ---------- 설정 ----------
@@ -144,11 +172,11 @@ export class PrinterManager {
       const raw: unknown = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) ?? "{}");
       if (!isRecord(raw)) return;
       const stored = raw as Partial<StoredPrinterSettings | LegacyStoredPrinterSettings>;
-      if (stored.version === SETTINGS_STORAGE_VERSION || stored.version === 2) {
+      if (stored.version === SETTINGS_STORAGE_VERSION || stored.version === 2 || stored.version === 3) {
         this.settings = parseSettingsMap(stored.devices);
         this.legacyProfileSettings = parseSettingsMap(stored.legacyProfiles);
-        // v2와 v3의 값 모양은 같지만, 다음 저장부터 새 식별자 정책의 v3로 기록한다.
-        if (stored.version === 2) this.persistSettings();
+        // 이전 값에는 paddingMm이 없으며 기본 1 mm가 적용된다. 다음 저장부터 v4로 기록한다.
+        if (stored.version !== SETTINGS_STORAGE_VERSION) this.persistSettings();
       } else if ("version" in stored) {
         console.warn(`지원하지 않는 프린터 설정 버전입니다: ${String(stored.version)}`);
       } else {
@@ -160,7 +188,7 @@ export class PrinterManager {
     }
   }
 
-  private settingsId(device: PrinterDevice): string {
+  private deviceStorageId(device: PrinterDevice): string {
     const prefix = `${device.transport}:${device.vendorId ?? "-"}:${device.productId ?? "-"}`;
     if (device.serialNumber) return `${prefix}:serial:${device.serialNumber}`;
     if (device.address) return `${prefix}:address:${device.address}`;
@@ -177,7 +205,7 @@ export class PrinterManager {
   getSettings(key: string): PrinterSettings {
     const device = this.devices.get(key);
     if (!device) return EMPTY_SETTINGS;
-    return this.settings[this.settingsId(device)] ??
+    return this.settings[this.deviceStorageId(device)] ??
       (device.profile ? this.legacyProfileSettings[device.profile.id] : undefined) ??
       EMPTY_SETTINGS;
   }
@@ -185,7 +213,7 @@ export class PrinterManager {
   updateSettings(key: string, patch: PrinterSettings): void {
     const device = this.devices.get(key);
     if (!device) throw new Error(`프린터 "${key}" 가 목록에 없습니다`);
-    const id = this.settingsId(device);
+    const id = this.deviceStorageId(device);
     this.settings[id] = { ...this.getSettings(key), ...patch };
     this.persistSettings();
     this.notifyChange();
@@ -201,6 +229,26 @@ export class PrinterManager {
     localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(stored));
   }
 
+  private loadRegistrations(): void {
+    if (typeof localStorage === "undefined") return;
+    try {
+      const raw: unknown = JSON.parse(localStorage.getItem(REGISTRATION_STORAGE_KEY) ?? "{}");
+      if (!isRecord(raw) || raw.version !== REGISTRATION_STORAGE_VERSION || !Array.isArray(raw.devices)) return;
+      this.registrations = new Set(raw.devices.filter((value): value is string => typeof value === "string"));
+    } catch (err) {
+      console.error("Failed to load printer registrations:", err);
+    }
+  }
+
+  private persistRegistrations(): void {
+    if (typeof localStorage === "undefined") return;
+    localStorage.setItem(REGISTRATION_STORAGE_KEY, JSON.stringify({
+      version: REGISTRATION_STORAGE_VERSION,
+      // WebUSB 세션 키는 다음 실행에서 다른 장치를 가리킬 수 있어 영구 저장하지 않는다.
+      devices: [...this.registrations].filter((id) => !id.includes(":key:")),
+    }));
+  }
+
   // ---------- 기기 ----------
 
   canRequestDevice(): boolean {
@@ -211,7 +259,48 @@ export class PrinterManager {
     return [...this.devices.values()];
   }
 
+  listRegisteredDevices(): PrinterDevice[] {
+    const order = new Map([...this.registrations].map((id, index) => [id, index]));
+    return this.listDevices()
+      .filter((device) => this.registrations.has(this.deviceStorageId(device)))
+      .sort((left, right) =>
+        (order.get(this.deviceStorageId(left)) ?? Number.MAX_SAFE_INTEGER) -
+        (order.get(this.deviceStorageId(right)) ?? Number.MAX_SAFE_INTEGER));
+  }
+
+  isRegistered(key: string): boolean {
+    const device = this.devices.get(key);
+    return !!device && this.registrations.has(this.deviceStorageId(device));
+  }
+
+  registerDevice(key: string): PrinterDevice {
+    const device = this.devices.get(key);
+    if (!device) throw new Error(`프린터 "${key}" 가 목록에 없습니다`);
+    if (!device.profile) throw new Error(`"${device.name}" 은 지원하는 프린터가 아닙니다`);
+    this.registrations.add(this.deviceStorageId(device));
+    this.persistRegistrations();
+    this.notifyChange();
+    return device;
+  }
+
+  async removeDevice(key: string): Promise<void> {
+    const device = this.devices.get(key);
+    if (!device) return;
+    await this.disconnect(key);
+    const id = this.deviceStorageId(device);
+    this.registrations.delete(id);
+    delete this.settings[id];
+    this.persistRegistrations();
+    this.persistSettings();
+    this.notifyChange();
+  }
+
   async refresh(): Promise<PrinterDevice[]> {
+    this.refreshing ??= this.runRefresh().finally(() => { this.refreshing = undefined; });
+    return this.refreshing;
+  }
+
+  private async runRefresh(): Promise<PrinterDevice[]> {
     const found = new Map<string, PrinterDevice>();
     const filter = knownPrinterFilter();
 
@@ -245,6 +334,62 @@ export class PrinterManager {
     return this.listDevices();
   }
 
+  /** 등록되어 있고 현재 발견되는 프린터를 다시 열어 실제 연결 상태까지 복원한다. */
+  async restoreRegisteredConnections(): Promise<PrinterRestoreResult> {
+    await this.refresh();
+    const registered = this.listRegisteredDevices();
+    const connected: PrinterConnection[] = [];
+    const failed: PrinterRestoreFailure[] = [];
+    const skipped: PrinterRestoreSkipped[] = [];
+    const groups = new Map<DeviceTransport, PrinterDevice[]>();
+    registered.forEach((device) => {
+      const group = groups.get(device.transportRef) ?? [];
+      group.push(device);
+      groups.set(device.transportRef, group);
+    });
+
+    await Promise.all([...groups].map(async ([transport, devices]) => {
+      const maxConnections = transport.maxConnections;
+      if (maxConnections === undefined) {
+        const results = await Promise.allSettled(devices.map((device) => this.connect(device.key)));
+        results.forEach((result, index) => {
+          const device = devices[index];
+          if (!device) return;
+          if (result.status === "fulfilled") connected.push(result.value);
+          else failed.push({ device, reason: toMessage(result.reason) });
+        });
+        return;
+      }
+
+      const alreadyConnected = devices.filter((device) => this.isConnected(device.key));
+      alreadyConnected.forEach((device) => {
+        const connection = this.getConnection(device.key);
+        if (connection) connected.push(connection);
+      });
+      let remaining = Math.max(0, maxConnections - alreadyConnected.length);
+
+      for (const device of devices) {
+        if (this.isConnected(device.key)) continue;
+        if (remaining === 0) {
+          skipped.push({
+            device,
+            reason: `${transport.kind.toUpperCase()} 전송은 동시에 ${maxConnections}대까지만 연결할 수 있습니다`,
+          });
+          continue;
+        }
+        try {
+          connected.push(await this.connect(device.key));
+          remaining -= 1;
+        } catch (reason) {
+          failed.push({ device, reason: toMessage(reason) });
+          // 연결에 실패했으므로 다음 등록 장치가 이 슬롯을 시도한다.
+        }
+      }
+    }));
+
+    return { connected, failed, skipped };
+  }
+
   /** WebUSB 처럼 사용자가 골라야 하는 전송에서 기기 하나를 추가한다. */
   async requestDevice(): Promise<PrinterDevice | null> {
     for (const transport of this.transports) {
@@ -270,7 +415,14 @@ export class PrinterManager {
   }
 
   getConnection(key: string): PrinterConnection | undefined {
-    return this.connections.get(key);
+    const connection = this.connections.get(key);
+    if (!connection) return undefined;
+    return {
+      key: connection.key,
+      profile: connection.profile,
+      probe: connection.probe,
+      link: connection.link,
+    };
   }
 
   async connect(key: string): Promise<PrinterConnection> {
@@ -397,7 +549,7 @@ export class PrinterManager {
    * 프린터가 인쇄 가능 영역을 알려주면 그 값이 이긴다 — 미디어 크기로 그리면 인쇄가
    * 라벨을 넘친다. 높이를 아무 데서도 알 수 없으면 `undefined` 로 두고 호출자가 정한다.
    */
-  imageSize(key: string): { width: number; height?: number } {
+  private physicalImageSize(key: string): { width: number; height?: number } {
     const connection = this.requireConnection(key);
     const settings = this.getSettings(key);
     const printable = connection.probe?.printable;
@@ -408,6 +560,23 @@ export class PrinterManager {
         printable?.lengthDots ||
         (settings.label ? Math.floor(settings.label.heightMm * connection.profile.dotsPerMm) : undefined),
     };
+  }
+
+  private paddingDots(key: string): number {
+    const connection = this.requireConnection(key);
+    const paddingMm = this.getSettings(key).paddingMm ?? DEFAULT_PRINT_PADDING_MM;
+    return Math.round(paddingMm * connection.profile.dotsPerMm);
+  }
+
+  imageSize(key: string): { width: number; height?: number } {
+    const physical = this.physicalImageSize(key);
+    const padding = this.paddingDots(key);
+    const width = physical.width - padding * 2;
+    const height = physical.height === undefined ? undefined : physical.height - padding * 2;
+    if (width <= 0 || (height !== undefined && height <= 0)) {
+      throw new Error(`프린터 "${key}" 의 라벨보다 인쇄 패딩이 큽니다`);
+    }
+    return { width, ...(height === undefined ? {} : { height }) };
   }
 
   async createImage(key: string, height?: number): Promise<RcptImage> {
@@ -425,14 +594,39 @@ export class PrinterManager {
   async print(key: string, image: RcptImage, options: PrintOptions = {}): Promise<void> {
     const connection = this.requireConnection(key);
     const settings = this.getSettings(key);
+    const physical = this.physicalImageSize(key);
+    const padding = this.paddingDots(key);
+    const contentWidth = physical.width - padding * 2;
+    const contentHeight = physical.height === undefined ? image.height : physical.height - padding * 2;
+    if (image.width > contentWidth || image.height > contentHeight) {
+      throw new Error(
+        `이미지가 패딩을 제외한 인쇄 영역보다 큽니다: ${image.width}x${image.height} > ${contentWidth}x${contentHeight} dots`,
+      );
+    }
 
-    const job = connection.profile.buildJob({
-      image,
-      copies: options.copies ?? 1,
-      probe: connection.probe,
-      label: settings.label,
-      rightMarginDots: settings.rightMarginDots,
-    });
+    const padded = await RcptImage.create(physical.width, physical.height ?? image.height + padding * 2);
+    const x = padding + Math.floor((contentWidth - image.width) / 2);
+    const y = padding + Math.floor((contentHeight - image.height) / 2);
+    const { data, stride } = image.readBitmap();
+    for (let row = 0; row < image.height; row += 1) {
+      for (let col = 0; col < image.width; col += 1) {
+        const ink = (data[row * stride + (col >> 3)] >> (7 - (col & 7))) & 1;
+        if (ink) padded.setPixel(x + col, y + row, true);
+      }
+    }
+
+    let job: Uint8Array;
+    try {
+      job = connection.profile.buildJob({
+        image: padded,
+        copies: options.copies ?? 1,
+        probe: connection.probe,
+        label: settings.label,
+        rightMarginDots: settings.rightMarginDots,
+      });
+    } finally {
+      padded.free();
+    }
 
     // 앞선 잡이 끝난 뒤에 보낸다. queue 는 항상 catch 된 것이라 거절되지 않는다.
     const run = connection.queue.then(() => this.send(connection, job, options));

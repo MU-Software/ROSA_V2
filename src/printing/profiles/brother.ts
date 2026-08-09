@@ -57,6 +57,7 @@ export const BROTHER_QL_820NWB: PrinterProfile = {
   id: "brother-ql-820nwb",
   name: "Brother QL-820NWB",
   links: { usb: { matches: [{ vendorId: 0x04f9, productId: 0x209d }], chunkBytes: 16384 } },
+  labelSizeSource: "device",
   headDots: BROTHER_HEAD_DOTS,
   dotsPerMm: BROTHER_DOTS_PER_MM,
   completionProbe: {

@@ -9,6 +9,7 @@ export const HPRT_SL43: PrinterProfile = {
   id: "hprt-sl43",
   name: "HPRT SL43",
   links: { usb: { matches: [{ vendorId: 0x2aaf, productId: 0x9006 }], chunkBytes: 4096 } },
+  labelSizeSource: "manual",
   dotsPerMm: 8,
   completionProbe: {
     request: HEALTH_REQUEST,
