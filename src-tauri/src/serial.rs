@@ -177,7 +177,9 @@ pub fn serial_close(state: State<'_, SerialState>, path: String) -> Result<(), S
 
     // 스레드가 fd 를 놓기 전에 재개방하면 배타적 잠금 획득에 실패한다.
     if let Some(handle) = entry.reader.take() {
-        handle.join().map_err(|_| "Reader thread panicked".to_string())?;
+        handle
+            .join()
+            .map_err(|_| "Reader thread panicked".to_string())?;
     }
     Ok(())
 }

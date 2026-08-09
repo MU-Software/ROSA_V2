@@ -51,7 +51,9 @@ fn take_device(
     key: &str,
 ) -> Result<Arc<OpenDevice>, String> {
     let open = devices.lock().map_err(|e| e.to_string())?;
-    open.get(key).cloned().ok_or("USB 장치가 열려 있지 않습니다".into())
+    open.get(key)
+        .cloned()
+        .ok_or("USB 장치가 열려 있지 않습니다".into())
 }
 
 fn device_key(bus: u8, address: u8) -> String {
@@ -184,11 +186,19 @@ fn open_device(bus: u8, address: u8) -> Result<OpenDevice, String> {
 }
 
 #[tauri::command]
-pub async fn usb_open(state: tauri::State<'_, UsbState>, bus: u8, address: u8) -> Result<String, String> {
+pub async fn usb_open(
+    state: tauri::State<'_, UsbState>,
+    bus: u8,
+    address: u8,
+) -> Result<String, String> {
     let devices = state.devices.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let key = device_key(bus, address);
-        if devices.lock().map_err(|e| e.to_string())?.contains_key(&key) {
+        if devices
+            .lock()
+            .map_err(|e| e.to_string())?
+            .contains_key(&key)
+        {
             return Ok(key);
         }
         // 버스 열거와 claim 은 오래 걸리므로 잠금 밖에서 한다.
@@ -226,7 +236,11 @@ pub async fn usb_write(
     tauri::async_runtime::spawn_blocking(move || {
         let device = take_device(&devices, &key)?;
 
-        let chunk = if chunk_bytes == 0 { data.len().max(1) } else { chunk_bytes };
+        let chunk = if chunk_bytes == 0 {
+            data.len().max(1)
+        } else {
+            chunk_bytes
+        };
         let timeout = Duration::from_millis(TRANSFER_TIMEOUT_MS);
         let mut written = 0;
         while written < data.len() {
@@ -255,7 +269,7 @@ pub async fn usb_read(
         let device = take_device(&devices, &key)?;
 
         let deadline = Instant::now() + Duration::from_millis(timeout_ms);
-        let mut buffer = vec![0u8; READ_PACKET_SIZE];
+        let mut buffer = [0u8; READ_PACKET_SIZE];
         let mut received: Vec<u8> = Vec::with_capacity(length);
 
         while received.len() < length {
