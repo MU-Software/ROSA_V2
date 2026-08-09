@@ -1,4 +1,5 @@
 import * as React from "react";
+import type { RestoreFailure } from "../apis/serial";
 import { isTauri } from "../utils/platform";
 import type { TopBarInfo } from "../schemas/topBar";
 
@@ -12,6 +13,8 @@ export type PersistedAppState = {
 export type EphemeralAppState = {
   isTauri: boolean;
   topBarInfo: TopBarInfo | null;
+  serialRestoreFailures: RestoreFailure[];
+  serialRestoreError: string | null;
 };
 
 export type AppContextData = PersistedAppState & EphemeralAppState;
@@ -26,6 +29,8 @@ const PERSISTED_FIELDS = Object.keys(PERSISTED_DEFAULTS) as (keyof PersistedAppS
 const EPHEMERAL_DEFAULTS: EphemeralAppState = {
   isTauri: isTauri(),
   topBarInfo: null,
+  serialRestoreFailures: [],
+  serialRestoreError: null,
 };
 
 export const INITIAL_APP_CONTEXT: AppContextData = { ...PERSISTED_DEFAULTS, ...EPHEMERAL_DEFAULTS };

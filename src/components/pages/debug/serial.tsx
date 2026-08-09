@@ -5,7 +5,7 @@ import { Delete, Refresh } from "@mui/icons-material";
 import { DeviceAddDialog } from "../../../dialogs/deviceAdd";
 import { LabelAssignDialog } from "../../../dialogs/labelAssign";
 import { TooltipIconButton } from "../../elements/buttons";
-import { serialManager, type RestoreFailure, type SerialDevice } from "../../../apis/serial";
+import { serialManager, type SerialDevice } from "../../../apis/serial";
 import { toMessage } from "../../../utils/bytes";
 import { type PortInfo } from "../../../adapters";
 import { useAppContext } from "../../../contexts";
@@ -54,7 +54,11 @@ const DeviceRow: FC<{ device: SerialDevice; onAssign: () => void; onRemove: () =
 };
 
 export const SerialDebugCard: FC = () => {
-  const { isTauri } = useAppContext();
+  const {
+    isTauri,
+    serialRestoreFailures: failures,
+    setAppContext,
+  } = useAppContext();
   const devices = useSerialDevices();
 
   const loadPorts = useCallback(() => serialManager.listAvailablePorts(), []);
@@ -63,7 +67,6 @@ export const SerialDebugCard: FC = () => {
   const [dialogKey, setDialogKey] = useState<string | null>(null);
   const [target, setTarget] = useState<SerialDevice | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [failures, setFailures] = useState<RestoreFailure[]>([]);
 
   const registeredKeys = useMemo(() => new Set(devices.map((d) => d.key)), [devices]);
   const unassignedLabels = serialManager.listUnassignedLabels();
@@ -89,10 +92,20 @@ export const SerialDebugCard: FC = () => {
     try {
       const { failed } = await serialManager.restore();
       refresh();
-      setFailures(failed);
+      setAppContext((prev) => ({
+        ...prev,
+        serialRestoreFailures: failed,
+        serialRestoreError: null,
+      }));
       setError(null);
     } catch (err) {
-      setError(toMessage(err));
+      const message = toMessage(err);
+      setAppContext((prev) => ({
+        ...prev,
+        serialRestoreFailures: [],
+        serialRestoreError: message,
+      }));
+      setError(message);
     }
   };
 
@@ -117,7 +130,10 @@ export const SerialDebugCard: FC = () => {
         {portsError && <Alert severity="warning">포트 목록 조회 실패: {portsError}</Alert>}
         {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
         {failures.length > 0 && (
-          <Alert severity="warning" onClose={() => setFailures([])}>
+          <Alert
+            severity="warning"
+            onClose={() => setAppContext((prev) => ({ ...prev, serialRestoreFailures: [] }))}
+          >
             <Stack spacing={0.5}>
               {failures.map((f) => <span key={f.label}><strong>{f.label}</strong>: {f.reason}</span>)}
             </Stack>

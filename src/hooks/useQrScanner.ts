@@ -71,6 +71,8 @@ class QrScanner {
       this.pending?.settle(error);
       this.pending = null;
       this.handlers.onError(error);
+      // 워커가 죽으면 run() 만 멈추고 카메라가 남을 수 있으므로 세션까지 정리한다.
+      void this.stop().catch(this.handlers.onError);
     };
 
     this.handlers.onSession(this.session);
@@ -164,7 +166,10 @@ export function useQrScanner(): UseQrScannerResult {
           });
         },
         onError: setError,
-        onSession: setSession,
+        onSession: (next) => {
+          setSession(next);
+          if (!next) setScanning(false);
+        },
       }),
     [],
   );
