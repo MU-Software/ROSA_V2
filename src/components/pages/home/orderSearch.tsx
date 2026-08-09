@@ -26,7 +26,10 @@ import type {
   OrderProductStatus,
   PaymentHistoryStatus,
 } from "../../../domain";
-import type { RegistrationDeskGateway } from "../../../gateways";
+import type {
+  ModifyOrderProductRequest,
+  RegistrationDeskGateway,
+} from "../../../gateways";
 
 const PAYMENT_STATUS_PRESENTATION: Record<PaymentHistoryStatus, {
   label: string;
@@ -70,12 +73,25 @@ export const OrderSearchWorkspace: FC<{
   children: ReactNode;
 }> = ({ gateway, children }) => {
   const [query, setQuery] = useState("");
+  const [orders, setOrders] = useState<Order[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [selectedProductId, setSelectedProductId] = useState<EntityId | null>(null);
   const searchMutation = useMutation({
     mutationFn: async (searchQuery: string) => {
       if (!gateway) throw new Error("주문 검색 gateway가 준비되지 않았습니다.");
       return gateway.searchOrders({ query: searchQuery });
+    },
+    onSuccess: setOrders,
+  });
+  const modifyProductMutation = useMutation({
+    mutationFn: async (request: ModifyOrderProductRequest) => {
+      if (!gateway) throw new Error("주문상품 수정 gateway가 준비되지 않았습니다.");
+      return gateway.modifyOrderProduct(request);
+    },
+    onSuccess: (updatedOrder) => {
+      setOrders((current) => current.map((order) =>
+        order.id === updatedOrder.id ? updatedOrder : order));
+      setSelectedOrder(updatedOrder);
     },
   });
   const hasSearched = searchMutation.status !== "idle";
@@ -92,6 +108,7 @@ export const OrderSearchWorkspace: FC<{
 
   const reset = () => {
     setQuery("");
+    setOrders([]);
     setSelectedOrder(null);
     setSelectedProductId(null);
     searchMutation.reset();
@@ -164,6 +181,13 @@ export const OrderSearchWorkspace: FC<{
                 order={selectedOrder}
                 product={selectedProduct}
                 onBack={() => setSelectedProductId(null)}
+                modifying={modifyProductMutation.isPending}
+                modifyError={modifyProductMutation.error?.message ?? null}
+                onClearModifyError={modifyProductMutation.reset}
+                onModifyOption={(optionId, customResponse) => modifyProductMutation.mutateAsync({
+                  order_product_relation_id: selectedProduct.id,
+                  options: [{ id: optionId, custom_response: customResponse }],
+                })}
               />
             ) : selectedOrder ? (
               <OrderDetails
@@ -173,7 +197,7 @@ export const OrderSearchWorkspace: FC<{
               />
             ) : (
               <OrderSearchResults
-                orders={searchMutation.data ?? []}
+                orders={orders}
                 onReset={reset}
                 onSelect={selectOrder}
               />
@@ -438,9 +462,47 @@ const OrderProductDetails: FC<{
   order: Order;
   product: OrderProductRelation;
   onBack: () => void;
-}> = ({ order, product, onBack }) => {
+  modifying: boolean;
+  modifyError: string | null;
+  onClearModifyError: () => void;
+  onModifyOption: (optionId: EntityId, customResponse: string | null) => Promise<Order>;
+}> = ({
+  order,
+  product,
+  onBack,
+  modifying,
+  modifyError,
+  onClearModifyError,
+  onModifyOption,
+}) => {
+  const [editingOptionId, setEditingOptionId] = useState<EntityId | null>(null);
+  const [customResponse, setCustomResponse] = useState("");
   const status = PRODUCT_STATUS_PRESENTATION[product.status];
   const ticket = product.ticket_info;
+  const optionsEditable = product.status !== "used" && product.status !== "refunded";
+
+  const beginOptionEdit = (optionId: EntityId, value: string | null) => {
+    onClearModifyError();
+    setEditingOptionId(optionId);
+    setCustomResponse(value ?? "");
+  };
+
+  const cancelOptionEdit = () => {
+    onClearModifyError();
+    setEditingOptionId(null);
+    setCustomResponse("");
+  };
+
+  const saveOption = async (optionId: EntityId) => {
+    const normalizedResponse = customResponse.trim() || null;
+    try {
+      await onModifyOption(optionId, normalizedResponse);
+    } catch {
+      return;
+    }
+    setEditingOptionId(null);
+    setCustomResponse("");
+  };
 
   return (
     <Stack sx={{ minHeight: 0 }}>
@@ -505,6 +567,7 @@ const OrderProductDetails: FC<{
           <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
             상품 옵션 {product.options.length}개
           </Typography>
+          {modifyError && <Alert severity="error">{modifyError}</Alert>}
           {product.options.length === 0 ? (
             <Alert severity="info">선택된 상품 옵션이 없습니다.</Alert>
           ) : (
@@ -513,6 +576,43 @@ const OrderProductDetails: FC<{
                 {product.options.map((option) => {
                   const value = option.custom_response ?? option.product_option?.name ?? "선택 없음";
                   const additionalPrice = option.product_option?.additional_price ?? 0;
+                  const customResponseOption = option.product_option_group.is_custom_response;
+                  const editing = editingOptionId === option.id;
+                  const responseRequired = option.product_option_group.placeholder_mode === "required";
+
+                  if (editing) {
+                    return (
+                      <Stack key={option.id} spacing={1.5} sx={{ p: 1.5 }}>
+                        <Box>
+                          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                            {option.product_option_group.name}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">직접 응답</Typography>
+                        </Box>
+                        <TextField
+                          multiline
+                          minRows={2}
+                          size="small"
+                          label="응답"
+                          value={customResponse}
+                          disabled={modifying}
+                          required={responseRequired}
+                          onChange={(event) => setCustomResponse(event.target.value)}
+                        />
+                        <Stack direction="row" spacing={1} sx={{ justifyContent: "flex-end" }}>
+                          <Button size="small" disabled={modifying} onClick={cancelOptionEdit}>취소</Button>
+                          <Button
+                            size="small"
+                            variant="contained"
+                            disabled={modifying || (responseRequired && !customResponse.trim())}
+                            onClick={() => void saveOption(option.id)}
+                          >
+                            {modifying ? "저장 중…" : "저장"}
+                          </Button>
+                        </Stack>
+                      </Stack>
+                    );
+                  }
 
                   return (
                     <Stack
@@ -535,6 +635,16 @@ const OrderProductDetails: FC<{
                           <Typography variant="caption" color="text.secondary">
                             추가 {formatPrice(additionalPrice)}
                           </Typography>
+                        )}
+                        {customResponseOption && optionsEditable && (
+                          <Button
+                            size="small"
+                            disabled={modifying}
+                            onClick={() => beginOptionEdit(option.id, option.custom_response)}
+                            sx={{ mt: 0.5 }}
+                          >
+                            수정
+                          </Button>
                         )}
                       </Box>
                     </Stack>
