@@ -19,6 +19,7 @@ impl CommandError {
         Self::new("internal", message)
     }
 
+    #[cfg(not(target_os = "ios"))]
     pub fn usb(operation: &str, error: rusb::Error) -> Self {
         let code = match error {
             rusb::Error::NoDevice => "disconnected",
@@ -31,6 +32,7 @@ impl CommandError {
         Self::new(code, format!("{operation}: {error}"))
     }
 
+    #[cfg(not(target_os = "ios"))]
     pub fn serial(operation: &str, error: serialport::Error, unavailable_code: &str) -> Self {
         use serialport::ErrorKind;
         use std::io::ErrorKind as IoErrorKind;
