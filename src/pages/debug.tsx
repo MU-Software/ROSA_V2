@@ -2,6 +2,7 @@ import { Container, Typography } from "@mui/material";
 import type { FC } from "react";
 import { ContextViewer, TopBarController } from "../components/pages/debug/context";
 import { PrinterDebugCard } from "../components/pages/debug/printer";
+import { PlatformDebugCard } from "../components/pages/debug/platform";
 import { QrDebugCard } from "../components/pages/debug/qr";
 import { SerialDebugCard } from "../components/pages/debug/serial";
 import { UsbDebugCard } from "../components/pages/debug/usb";
@@ -16,6 +17,7 @@ export const DebugPage: FC = () => {
 
       <ContextViewer data={{ isTauri, topBarInfo }} />
       <TopBarController />
+      <PlatformDebugCard />
       <SerialDebugCard />
       <QrDebugCard />
       <UsbDebugCard />

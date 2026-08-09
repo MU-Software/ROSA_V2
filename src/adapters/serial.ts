@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { isTauri } from "../utils/platform";
+import { isSerialSupported, isTauri } from "../utils/platform";
 import { TransportError, toTransportError } from "./errors";
 
 /** `src-tauri/src/serial.rs` 의 상수와 반드시 동일해야 한다. */
@@ -195,6 +195,16 @@ export class WebSerialAdapter implements SerialAdapter {
   }
 }
 
+class UnsupportedSerialAdapter implements SerialAdapter {
+  async listPorts(): Promise<PortInfo[]> { return []; }
+  async requestPort(): Promise<PortInfo | null> { return null; }
+  async open(): Promise<void> { throw new TransportError("unsupported", "이 플랫폼은 시리얼 장치를 지원하지 않습니다"); }
+  async close(): Promise<void> { /* 열린 장치가 없다. */ }
+  getReadable(): ReadableStream<Uint8Array> { throw new TransportError("unsupported", "이 플랫폼은 시리얼 장치를 지원하지 않습니다"); }
+  getWritable(): WritableStream<Uint8Array> { throw new TransportError("unsupported", "이 플랫폼은 시리얼 장치를 지원하지 않습니다"); }
+}
+
 export function createSerialAdapter(): SerialAdapter {
+  if (!isSerialSupported()) return new UnsupportedSerialAdapter();
   return isTauri() ? new TauriSerialAdapter() : new WebSerialAdapter();
 }

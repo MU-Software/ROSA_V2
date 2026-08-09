@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { isAndroid, isIos, isTauri } from "../utils/platform";
+import { isAndroid, isIos, isTauri, isUsbSupported } from "../utils/platform";
 import { DEFAULT_READ_TIMEOUT_MS, type DiscoveryFilter, type LinkSpec, type UsbLink } from "../printing/profiles";
 import { createDisconnectSignal, type DeviceSession, type DeviceTransport, type DiscoveredDevice } from "./device";
 import { TransportError, toTransportError } from "./errors";
@@ -109,6 +109,11 @@ class WebUsbAdapter implements UsbAdapter {
   }
 }
 
+class UnsupportedUsbAdapter implements UsbAdapter {
+  async listDevices(): Promise<UsbDeviceInfo[]> { return []; }
+  async requestDevice(): Promise<UsbDeviceInfo | null> { return null; }
+}
+
 const toDeviceInfo = (d: USBDevice): UsbDeviceInfo => ({
   // 웹에서는 버스/주소를 알 수 없다.
   bus: 0,
@@ -127,6 +132,7 @@ const toDeviceInfo = (d: USBDevice): UsbDeviceInfo => ({
 });
 
 export function createUsbAdapter(): UsbAdapter {
+  if (!isUsbSupported()) return new UnsupportedUsbAdapter();
   return isTauri() ? new TauriUsbAdapter() : new WebUsbAdapter();
 }
 

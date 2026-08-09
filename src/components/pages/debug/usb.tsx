@@ -7,6 +7,7 @@ import { toMessage } from "../../../utils/bytes";
 import { TooltipIconButton } from "../../elements/buttons";
 import { DebugCard } from "./card";
 import { hex, useRefreshable } from "./shared";
+import { isUsbSupported } from "../../../utils/platform";
 
 const EMPTY_USB_DEVICES: UsbDeviceInfo[] = [];
 
@@ -25,6 +26,7 @@ export const UsbDebugCard: FC = () => {
   const [requestError, setRequestError] = useState<string | null>(null);
   const [printersOnly, setPrintersOnly] = useState(false);
   const [search, setSearch] = useState("");
+  const supported = isUsbSupported();
 
   const shown = useMemo(
     () => devices.filter((d) => (!printersOnly || isPrinter(d)) && matchesUsbSearch(d, search)),
@@ -47,10 +49,11 @@ export const UsbDebugCard: FC = () => {
       action={<TooltipIconButton tooltip="장치 다시 검색" icon={Refresh} onClick={refresh} />}
     >
       <Stack spacing={2}>
+        {!supported && <Alert severity="warning">이 플랫폼에서는 USB 장치를 지원하지 않습니다.</Alert>}
         {error && <Alert severity="warning">장치 목록 조회 실패: {error}</Alert>}
         {requestError && <Alert severity="error" onClose={() => setRequestError(null)}>{requestError}</Alert>}
         {!isTauri && (
-          <Button variant="outlined" onClick={() => void request()}>장치 권한 요청</Button>
+          <Button variant="outlined" disabled={!supported} onClick={() => void request()}>장치 권한 요청</Button>
         )}
 
         <Stack direction="row" spacing={2} sx={{ alignItems: "center", flexWrap: "wrap" }}>

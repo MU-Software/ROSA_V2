@@ -1,3 +1,5 @@
+import { getPlatformCapabilities } from "../utils/platform";
+
 /** QR 인식에는 이 정도면 충분하고, 프레임당 변환·디코딩 비용이 크게 줄어든다. */
 const DEFAULT_SCAN_WIDTH = 640;
 
@@ -112,7 +114,7 @@ class MediaDevicesCameraSession implements CameraSession {
  * 그대로 동작한다. 리눅스 Tauri 빌드에서는 카메라를 포기한다.
  */
 export function isCameraSupported(): boolean {
-  return typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
+  return getPlatformCapabilities().camera.available;
 }
 
 /** 라벨은 권한이 있어야 채워지므로 startCamera() 이후에 부르는 편이 낫다. */

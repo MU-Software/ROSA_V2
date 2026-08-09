@@ -12,6 +12,7 @@ import { useAppContext } from "../../../contexts";
 import { useCallback, useMemo, useState, type FC } from "react";
 import { useSerialDevices, useSerialPort } from "../../../hooks/useSerialPort";
 import { usesWorkerBridge } from "../../../apis/serialBridge";
+import { isSerialSupported } from "../../../utils/platform";
 
 const EMPTY_PORTS: PortInfo[] = [];
 
@@ -70,6 +71,7 @@ export const SerialDebugCard: FC = () => {
 
   const registeredKeys = useMemo(() => new Set(devices.map((d) => d.key)), [devices]);
   const unassignedLabels = serialManager.listUnassignedLabels();
+  const supported = isSerialSupported();
 
   const addDevice = async () => {
     try {
@@ -123,6 +125,7 @@ export const SerialDebugCard: FC = () => {
       action={<TooltipIconButton tooltip="다시 검색하고 연결" icon={Refresh} onClick={() => void rescan()} />}
     >
       <Stack spacing={2}>
+        {!supported && <Alert severity="warning">이 플랫폼에서는 시리얼 장치를 지원하지 않습니다.</Alert>}
         <Typography variant="caption" color="text.secondary">
           {isTauri ? "Tauri" : "Web"} · 읽기 루프: {isTauri ? "Rust 스레드" : usesWorkerBridge() ? "Worker" : "메인 스레드(폴백)"}
         </Typography>
@@ -141,7 +144,7 @@ export const SerialDebugCard: FC = () => {
         )}
 
         <Stack direction="row" spacing={1}>
-          <Button variant="contained" onClick={() => void addDevice()}>기기 추가</Button>
+          <Button variant="contained" disabled={!supported} onClick={() => void addDevice()}>기기 추가</Button>
         </Stack>
 
         <Typography variant="subtitle2">등록된 기기 ({devices.length})</Typography>
