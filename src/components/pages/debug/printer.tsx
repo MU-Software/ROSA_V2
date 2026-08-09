@@ -127,6 +127,11 @@ const PrinterRow: FC<{ device: PrinterDevice }> = ({ device }) => {
         {state.status === "faulted" && state.error && (
           <Alert severity="error">장치 연결이 끊겼습니다: {state.error.message}</Alert>
         )}
+        {!printerManager.hasPersistentSettingsIdentity(device.key) && (
+          <Alert severity="warning">
+            이 브라우저는 이 USB 장치의 영구 식별자를 제공하지 않습니다. 보정 설정은 앱을 다시 시작하면 유지되지 않을 수 있습니다.
+          </Alert>
+        )}
 
         {connection && (
           <>

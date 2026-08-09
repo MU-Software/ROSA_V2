@@ -21,6 +21,9 @@ pub struct UsbDeviceInfo {
     pub manufacturer: Option<String>,
     pub product: Option<String>,
     pub serial_number: Option<String>,
+    /// USB 컨트롤러부터 장치가 꽂힌 포트까지의 경로. 주소와 달리 재연결 후에도 같아서
+    /// 시리얼 번호가 없는 장치의 설정 식별자로 쓸 수 있다.
+    pub physical_path: Option<String>,
     pub class_code: u8,
     /// 복합 장치는 `class_code` 가 0 이고 실제 클래스가 인터페이스에 있다. 프린터를
     /// 가려내려면 이쪽을 봐야 한다.
@@ -111,6 +114,17 @@ pub fn usb_list_devices() -> CommandResult<Vec<UsbDeviceInfo>> {
             manufacturer,
             product,
             serial_number,
+            physical_path: device.port_numbers().ok().and_then(|ports| {
+                if ports.is_empty() {
+                    return None;
+                }
+                let ports = ports
+                    .iter()
+                    .map(u8::to_string)
+                    .collect::<Vec<_>>()
+                    .join(".");
+                Some(format!("{}:{ports}", device.bus_number()))
+            }),
             class_code: desc.class_code(),
             interface_classes,
         });

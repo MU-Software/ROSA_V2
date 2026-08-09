@@ -9,6 +9,8 @@ export type DiscoveredDevice = {
   vendorId?: number;
   productId?: number;
   serialNumber?: string;
+  /** 재연결 뒤에도 유지되는 물리 포트/장치 식별자. 전송이 보장할 수 있을 때만 있다. */
+  physicalId?: string;
   /** 블루투스 주소. */
   address?: string;
 };

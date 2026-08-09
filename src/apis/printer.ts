@@ -15,7 +15,7 @@ import { RcptImage } from "../printing/receipet";
 import { toMessage } from "../utils/bytes";
 
 const SETTINGS_STORAGE_KEY = "rosa.printer.settings";
-const SETTINGS_STORAGE_VERSION = 2;
+const SETTINGS_STORAGE_VERSION = 3;
 
 /** 프린터가 스스로 알려주지 못해 사용자가 정해야 하는 값들. 물리 장치 단위로 저장한다. */
 export type PrinterSettings = {
@@ -30,6 +30,8 @@ type StoredPrinterSettings = {
   /** 버전 1의 프로파일 단위 설정. 장치별 설정이 생길 때까지 기본값으로만 쓴다. */
   legacyProfiles: Record<string, PrinterSettings>;
 };
+
+type LegacyStoredPrinterSettings = Omit<StoredPrinterSettings, "version"> & { version: 2 };
 
 export type PrinterDevice = DiscoveredDevice & {
   profile?: PrinterProfile;
@@ -75,6 +77,41 @@ type ActiveConnection = PrinterConnection & {
 /** 매번 새 객체를 돌려주면 구독자가 값이 바뀐 줄 알고 다시 그린다. */
 const EMPTY_SETTINGS: PrinterSettings = Object.freeze({});
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === "object" && !Array.isArray(value);
+
+const optionalFiniteNumber = (value: unknown): value is number | undefined =>
+  value === undefined || (typeof value === "number" && Number.isFinite(value));
+
+const parsePrinterSettings = (value: unknown): PrinterSettings | undefined => {
+  if (!isRecord(value)) return undefined;
+  if (!optionalFiniteNumber(value.rightMarginDots)) return undefined;
+
+  let label: LabelSpec | undefined;
+  if (value.label !== undefined) {
+    if (!isRecord(value.label)) return undefined;
+    const { widthMm, heightMm, gapMm } = value.label;
+    if (!optionalFiniteNumber(widthMm) || !optionalFiniteNumber(heightMm) || !optionalFiniteNumber(gapMm)) return undefined;
+    if (widthMm === undefined || heightMm === undefined) return undefined;
+    label = { widthMm, heightMm, ...(gapMm === undefined ? {} : { gapMm }) };
+  }
+
+  return {
+    ...(label ? { label } : {}),
+    ...(value.rightMarginDots === undefined ? {} : { rightMarginDots: value.rightMarginDots }),
+  };
+};
+
+const parseSettingsMap = (value: unknown): Record<string, PrinterSettings> => {
+  if (!isRecord(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([key, settings]) => {
+      const parsed = parsePrinterSettings(settings);
+      return parsed ? [[key, parsed]] : [];
+    }),
+  );
+};
+
 /**
  * PT-390 실측은 잡 크기와 거의 무관하게 4.7~5.5 초였다. 고정 비용이 지배하므로 고정
  * 15 초를 깔고 한계 20 KB/s 를 더한다 — 실측의 3 배 여유를 두면서도 멈춘 프린터를
@@ -105,16 +142,18 @@ export class PrinterManager {
     if (typeof localStorage === "undefined") return;
     try {
       const raw: unknown = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) ?? "{}");
-      if (!raw || typeof raw !== "object") return;
-      const stored = raw as Partial<StoredPrinterSettings>;
-      if (stored.version === SETTINGS_STORAGE_VERSION && stored.devices && typeof stored.devices === "object") {
-        this.settings = stored.devices;
-        if (stored.legacyProfiles && typeof stored.legacyProfiles === "object") {
-          this.legacyProfileSettings = stored.legacyProfiles;
-        }
+      if (!isRecord(raw)) return;
+      const stored = raw as Partial<StoredPrinterSettings | LegacyStoredPrinterSettings>;
+      if (stored.version === SETTINGS_STORAGE_VERSION || stored.version === 2) {
+        this.settings = parseSettingsMap(stored.devices);
+        this.legacyProfileSettings = parseSettingsMap(stored.legacyProfiles);
+        // v2와 v3의 값 모양은 같지만, 다음 저장부터 새 식별자 정책의 v3로 기록한다.
+        if (stored.version === 2) this.persistSettings();
+      } else if ("version" in stored) {
+        console.warn(`지원하지 않는 프린터 설정 버전입니다: ${String(stored.version)}`);
       } else {
         // 이전 형식은 `{ [profileId]: settings }` 였다. 첫 장치별 수정 전까지 기본값으로 유지한다.
-        this.legacyProfileSettings = raw as Record<string, PrinterSettings>;
+        this.legacyProfileSettings = parseSettingsMap(raw);
       }
     } catch (err) {
       console.error("Failed to load printer settings:", err);
@@ -125,8 +164,14 @@ export class PrinterManager {
     const prefix = `${device.transport}:${device.vendorId ?? "-"}:${device.productId ?? "-"}`;
     if (device.serialNumber) return `${prefix}:serial:${device.serialNumber}`;
     if (device.address) return `${prefix}:address:${device.address}`;
-    // 시리얼번호가 없는 WebUSB/Tauri USB 장치는 영구적인 물리 식별자가 없어 현재 키가 최선이다.
+    if (device.physicalId) return `${prefix}:physical:${device.physicalId}`;
+    // WebUSB는 물리 포트 경로를 공개하지 않는다. 이 경우에만 세션 키로 제한한다.
     return `${prefix}:key:${device.key}`;
+  }
+
+  hasPersistentSettingsIdentity(key: string): boolean {
+    const device = this.devices.get(key);
+    return !!(device?.serialNumber || device?.address || device?.physicalId);
   }
 
   getSettings(key: string): PrinterSettings {
@@ -142,15 +187,18 @@ export class PrinterManager {
     if (!device) throw new Error(`프린터 "${key}" 가 목록에 없습니다`);
     const id = this.settingsId(device);
     this.settings[id] = { ...this.getSettings(key), ...patch };
-    if (typeof localStorage !== "undefined") {
-      const stored: StoredPrinterSettings = {
-        version: SETTINGS_STORAGE_VERSION,
-        devices: this.settings,
-        legacyProfiles: this.legacyProfileSettings,
-      };
-      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(stored));
-    }
+    this.persistSettings();
     this.notifyChange();
+  }
+
+  private persistSettings(): void {
+    if (typeof localStorage === "undefined") return;
+    const stored: StoredPrinterSettings = {
+      version: SETTINGS_STORAGE_VERSION,
+      devices: this.settings,
+      legacyProfiles: this.legacyProfileSettings,
+    };
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(stored));
   }
 
   // ---------- 기기 ----------

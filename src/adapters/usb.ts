@@ -14,6 +14,7 @@ export type RustUsbDevice = {
   manufacturer?: string;
   product?: string;
   serial_number?: string;
+  physical_path?: string;
   class_code: number;
   interface_classes: number[];
 };
@@ -335,6 +336,7 @@ class TauriUsbTransport implements DeviceTransport {
       vendorId: device.vendor_id,
       productId: device.product_id,
       serialNumber: device.serial_number ?? undefined,
+      physicalId: device.physical_path ?? undefined,
     }));
   }
 

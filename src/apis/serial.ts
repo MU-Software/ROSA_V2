@@ -6,6 +6,7 @@ import { probeBaudRate, type BaudProbeResult } from "./serialScan";
 
 const BINDING_STORAGE_KEY = "rosa.serial.devices";
 const LABEL_STORAGE_KEY = "rosa.serial.labels";
+const BINDING_STORAGE_VERSION = 2;
 
 export type DeviceIdentity = {
   path?: string;
@@ -33,6 +34,45 @@ type StoredBinding = DeviceIdentity & {
   label: string;
   baudRate: number;
   framing?: Framing;
+};
+
+type StoredBindings = {
+  version: typeof BINDING_STORAGE_VERSION;
+  bindings: StoredBinding[];
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === "object" && !Array.isArray(value);
+
+const optionalString = (value: unknown): value is string | undefined =>
+  value === undefined || typeof value === "string";
+
+const optionalInteger = (value: unknown): value is number | undefined =>
+  value === undefined || (typeof value === "number" && Number.isInteger(value));
+
+const parseStoredBinding = (value: unknown): StoredBinding | undefined => {
+  if (!isRecord(value) || typeof value.label !== "string" || !value.label.trim()) return undefined;
+  if (typeof value.baudRate !== "number" || !Number.isInteger(value.baudRate) || value.baudRate <= 0) return undefined;
+  if (!optionalString(value.path) || !optionalInteger(value.vid) || !optionalInteger(value.pid) || !optionalString(value.serialNumber)) {
+    return undefined;
+  }
+  if (value.framing !== undefined) {
+    if (!isRecord(value.framing) || typeof value.framing.prefix !== "string" || typeof value.framing.suffix !== "string") {
+      return undefined;
+    }
+  }
+
+  return {
+    label: value.label,
+    baudRate: value.baudRate,
+    ...(value.path === undefined ? {} : { path: value.path }),
+    ...(value.vid === undefined ? {} : { vid: value.vid }),
+    ...(value.pid === undefined ? {} : { pid: value.pid }),
+    ...(value.serialNumber === undefined ? {} : { serialNumber: value.serialNumber }),
+    ...(value.framing === undefined
+      ? {}
+      : { framing: { prefix: value.framing.prefix as string, suffix: value.framing.suffix as string } }),
+  };
 };
 
 export type RestoreFailure = {
@@ -126,12 +166,21 @@ export class SerialPortManager {
     }
     try {
       const raw: unknown = JSON.parse(localStorage.getItem(BINDING_STORAGE_KEY) ?? "[]");
-      if (!Array.isArray(raw)) return;
-      this.bindings = raw.filter((entry): entry is StoredBinding => {
-        const b = entry as StoredBinding | null;
-        return typeof b?.label === "string" && typeof b.baudRate === "number";
+      // v1은 배열 자체였고 v2부터 스키마 버전을 명시한다.
+      const entries = Array.isArray(raw)
+        ? raw
+        : isRecord(raw) && raw.version === BINDING_STORAGE_VERSION && Array.isArray(raw.bindings)
+          ? raw.bindings
+          : [];
+      if (!Array.isArray(raw) && entries.length === 0 && isRecord(raw) && "version" in raw) {
+        console.warn(`지원하지 않는 시리얼 설정 버전입니다: ${String(raw.version)}`);
+      }
+      this.bindings = entries.flatMap((entry) => {
+        const parsed = parseStoredBinding(entry);
+        return parsed ? [parsed] : [];
       });
       this.bindings.forEach((b) => this.knownLabels.add(b.label));
+      if (Array.isArray(raw)) this.persist();
     } catch (err) {
       console.error("Failed to load serial bindings:", err);
     }
@@ -171,7 +220,8 @@ export class SerialPortManager {
     this.bindings = this.collectBindings();
     if (typeof localStorage === "undefined") return;
     localStorage.setItem(LABEL_STORAGE_KEY, JSON.stringify([...this.knownLabels]));
-    localStorage.setItem(BINDING_STORAGE_KEY, JSON.stringify(this.bindings));
+    const stored: StoredBindings = { version: BINDING_STORAGE_VERSION, bindings: this.bindings };
+    localStorage.setItem(BINDING_STORAGE_KEY, JSON.stringify(stored));
   }
 
   // ---------- 기기 ----------
