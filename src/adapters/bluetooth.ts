@@ -38,10 +38,23 @@ class SppTransport implements DeviceTransport {
     return requested.bluetooth === "granted";
   }
 
-  async list(): Promise<DiscoveredDevice[]> {
+  async list(filter?: DiscoveryFilter): Promise<DiscoveredDevice[]> {
     if (!(await this.ensurePermission())) throw new Error("블루투스 권한이 거부되었습니다");
-    const { devices } = await invoke<{ devices: SppDevice[] }>("plugin:bluetooth-spp|list_devices");
-    return devices.map((device) => ({
+    const { devices: bonded } = await invoke<{ devices: SppDevice[] }>("plugin:bluetooth-spp|list_devices");
+    let discovered: SppDevice[] = [];
+    try {
+      const result = await invoke<{ devices: SppDevice[] }>("plugin:bluetooth-spp|discover", {
+        timeoutMs: SPP_DISCOVER_MS,
+        stopOnNames: filter?.sppNamePatterns?.map((pattern) => pattern.source),
+      });
+      discovered = result.devices;
+    } catch (error) {
+      // 주변 검색이 실패해도 이미 페어링한 장치는 설정할 수 있어야 한다.
+      console.warn("Failed to discover nearby Bluetooth SPP devices:", error);
+    }
+
+    const devices = new Map([...bonded, ...discovered].map((device) => [device.address, device]));
+    return [...devices.values()].map((device) => ({
       key: device.address,
       transport: this.kind,
       name: device.name,
@@ -127,6 +140,7 @@ const BLE_SCAN_MS = 8000;
 
 class BleTransport implements DeviceTransport {
   readonly kind = "ble" as const;
+  readonly maxConnections = 1;
   private inbox: number[] = [];
   private activeKey: string | undefined;
   private openingKey: string | undefined;
@@ -148,15 +162,16 @@ class BleTransport implements DeviceTransport {
     // await 하지 않는다 — 블록한다면 await 가 조기 종료를 막는다.
     const services = filter?.bleServices;
     const scanning = blec.startScan((devices) => {
-      found = devices
-        .filter((device) => !services || device.services.some((uuid) => services.includes(uuid.toLowerCase())))
-        .map((device) => ({
+      found = devices.map((device) => ({
           key: device.address,
           transport: this.kind,
           name: device.name || device.address,
           address: device.address,
         }));
-      if (found.length > 0) onFirstHit?.();
+      const knownFound = devices.some(
+        (device) => !services || device.services.some((uuid) => services.includes(uuid.toLowerCase())),
+      );
+      if (knownFound) onFirstHit?.();
     }, BLE_SCAN_MS);
 
     let deadline: ReturnType<typeof setTimeout> | undefined;

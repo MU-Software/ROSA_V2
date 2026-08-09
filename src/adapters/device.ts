@@ -47,6 +47,8 @@ export function createDisconnectSignal() {
 
 export interface DeviceTransport {
   readonly kind: TransportKind;
+  /** 생략하면 여러 장치를 동시에 열 수 있다. */
+  readonly maxConnections?: number;
   list(filter?: DiscoveryFilter): Promise<DiscoveredDevice[]>;
   /** 사용자 선택 창이 필요한 전송만 구현한다. 없으면 목록이 곧 전부다. */
   request?(filter?: DiscoveryFilter): Promise<DiscoveredDevice | null>;
