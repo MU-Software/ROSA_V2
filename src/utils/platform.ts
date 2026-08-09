@@ -23,6 +23,11 @@ export const isUsbSupported = (): boolean => {
   return typeof navigator !== "undefined" && "usb" in navigator;
 };
 
+export type QrInputMode = "camera" | "serial";
+
+/** 제품 정책: 모바일은 카메라, 웹·데스크톱은 전용 Serial 리더로 QR을 받는다. */
+export const getQrInputMode = (): QrInputMode => isAndroid() || isIos() ? "camera" : "serial";
+
 export type PlatformCapability = { available: boolean; detail: string };
 
 export type PlatformCapabilities = {
