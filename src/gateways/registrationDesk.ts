@@ -35,6 +35,12 @@ export type RegistrationDeskConfiguration = {
   };
 };
 
+export type RegistrationDeskStatistics = {
+  registration_target_count: number;
+  registered_count: number;
+  waiting_count: number;
+};
+
 export interface RegistrationDeskGateway {
   searchOrders(params: SearchOrdersParams): Promise<Order[]>;
   getOrderByProductScancode(scancode: OrderProductScancode): Promise<Order>;
@@ -42,4 +48,5 @@ export interface RegistrationDeskGateway {
   modifyOrderProduct(request: ModifyOrderProductRequest): Promise<Order>;
   refundOrder(request: RefundOrderRequest): Promise<Order>;
   getConfiguration(): Promise<RegistrationDeskConfiguration>;
+  getStatistics(): Promise<RegistrationDeskStatistics>;
 }

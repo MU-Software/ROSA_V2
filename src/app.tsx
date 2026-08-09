@@ -8,8 +8,11 @@ import { AppContext, loadAppConfig, saveAppConfig, type AppContextData } from ".
 import { DebugPage } from "./pages/debug";
 import { HomePage } from "./pages/home";
 import { NotFoundPage } from "./pages/notFound";
+import type { RegistrationDeskGateway } from "./gateways";
 
-export const App: FC = () => {
+export const App: FC<{ registrationDeskGateway: RegistrationDeskGateway | null }> = ({
+  registrationDeskGateway,
+}) => {
   const [appState, setAppContext] = useState<AppContextData>(loadAppConfig);
   useEffect(() => { saveAppConfig(appState); }, [appState]);
 
@@ -62,7 +65,7 @@ export const App: FC = () => {
         </Alert>
       )}
       <Routes>
-        <Route path="/" element={<HomePage />} />
+        <Route path="/" element={<HomePage gateway={registrationDeskGateway} />} />
         <Route path="/debug" element={<DebugPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
