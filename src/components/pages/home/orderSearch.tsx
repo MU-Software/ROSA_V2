@@ -31,12 +31,14 @@ import {
   type OrderProductRelation,
   type OrderProductStatus,
   type PaymentHistoryStatus,
+  type TicketInfo,
 } from "../../../domain";
 import type {
   ModifyOrderProductRequest,
   RefundOrderRequest,
   RegistrationDeskGateway,
 } from "../../../gateways";
+import { TicketInfoEditor } from "./ticketInfoEditor";
 
 const PAYMENT_STATUS_PRESENTATION: Record<PaymentHistoryStatus, {
   label: string;
@@ -112,6 +114,13 @@ export const OrderSearchWorkspace: FC<{
       updateOrder(updatedOrder);
       onRegistrationChanged();
     },
+  });
+  const modifyTicketInfoMutation = useMutation({
+    mutationFn: async (request: ModifyOrderProductRequest) => {
+      if (!gateway) throw new Error("참가자 정보 수정 gateway가 준비되지 않았습니다.");
+      return gateway.modifyOrderProduct(request);
+    },
+    onSuccess: updateOrder,
   });
   const refundMutation = useMutation({
     mutationFn: async (request: RefundOrderRequest) => {
@@ -223,6 +232,13 @@ export const OrderSearchWorkspace: FC<{
                 onChangeStatus={(nextStatus) => modifyStatusMutation.mutateAsync({
                   order_product_relation_id: selectedProduct.id,
                   status: nextStatus,
+                })}
+                ticketInfoSaving={modifyTicketInfoMutation.isPending}
+                ticketInfoError={modifyTicketInfoMutation.error?.message ?? null}
+                onClearTicketInfoError={modifyTicketInfoMutation.reset}
+                onModifyTicketInfo={(ticketInfo) => modifyTicketInfoMutation.mutateAsync({
+                  order_product_relation_id: selectedProduct.id,
+                  ticket_info: ticketInfo,
                 })}
               />
             ) : selectedOrder ? (
@@ -591,6 +607,10 @@ const OrderProductDetails: FC<{
   statusError: string | null;
   onClearStatusError: () => void;
   onChangeStatus: (nextStatus: OrderProductStatus) => Promise<Order>;
+  ticketInfoSaving: boolean;
+  ticketInfoError: string | null;
+  onClearTicketInfoError: () => void;
+  onModifyTicketInfo: (ticketInfo: TicketInfo) => Promise<Order>;
 }> = ({
   order,
   product,
@@ -603,13 +623,19 @@ const OrderProductDetails: FC<{
   statusError,
   onClearStatusError,
   onChangeStatus,
+  ticketInfoSaving,
+  ticketInfoError,
+  onClearTicketInfoError,
+  onModifyTicketInfo,
 }) => {
   const [editingOptionId, setEditingOptionId] = useState<EntityId | null>(null);
   const [customResponse, setCustomResponse] = useState("");
   const [statusDialogOpen, setStatusDialogOpen] = useState(false);
+  const [ticketInfoEditorOpen, setTicketInfoEditorOpen] = useState(false);
   const status = PRODUCT_STATUS_PRESENTATION[product.status];
   const ticket = product.ticket_info;
   const optionsEditable = product.status !== "used" && product.status !== "refunded";
+  const ticketInfoEditable = product.status === "paid" || product.status === "used";
   const nextStatus: OrderProductStatus | null = product.status === "paid"
     ? "used"
     : product.status === "used" ? "paid" : null;
@@ -618,7 +644,7 @@ const OrderProductDetails: FC<{
     nextStatus,
   );
   const statusActionLabel = nextStatus === "used" ? "사용 처리" : "사용 취소";
-  const busy = modifying || statusChanging;
+  const busy = modifying || statusChanging || ticketInfoSaving;
 
   const beginOptionEdit = (optionId: EntityId, value: string | null) => {
     onClearModifyError();
@@ -662,6 +688,16 @@ const OrderProductDetails: FC<{
       return;
     }
     setStatusDialogOpen(false);
+  };
+
+  const openTicketInfoEditor = () => {
+    onClearTicketInfoError();
+    setTicketInfoEditorOpen(true);
+  };
+
+  const closeTicketInfoEditor = () => {
+    onClearTicketInfoError();
+    setTicketInfoEditorOpen(false);
   };
 
   return (
@@ -735,7 +771,18 @@ const OrderProductDetails: FC<{
 
         {ticket && (
           <Stack spacing={1}>
-            <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>참가자 정보</Typography>
+            <Stack direction="row" spacing={1} sx={{ alignItems: "center", justifyContent: "space-between" }}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>참가자 정보</Typography>
+              {ticketInfoEditable && (
+                <Button
+                  size="small"
+                  disabled={busy || ticketInfoSaving}
+                  onClick={openTicketInfoEditor}
+                >
+                  수정
+                </Button>
+              )}
+            </Stack>
             <Paper variant="outlined" sx={{ p: 2 }}>
               <Typography>{ticket.name}</Typography>
               {ticket.organization && (
@@ -868,6 +915,15 @@ const OrderProductDetails: FC<{
           </Button>
         </DialogActions>
       </Dialog>
+      {ticket && ticketInfoEditorOpen && (
+        <TicketInfoEditor
+          ticketInfo={ticket}
+          saving={ticketInfoSaving}
+          error={ticketInfoError}
+          onClose={closeTicketInfoEditor}
+          onSave={onModifyTicketInfo}
+        />
+      )}
     </Stack>
   );
 };

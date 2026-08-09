@@ -3,6 +3,7 @@ import type {
   Order,
   OrderProductScancode,
   OrderProductStatus,
+  TicketInfo,
 } from "../domain";
 
 export type SearchOrdersParams = {
@@ -18,6 +19,7 @@ export type ModifyOrderProductRequest = {
   order_product_relation_id: EntityId;
   status?: OrderProductStatus;
   options?: ModifyOrderProductOption[];
+  ticket_info?: TicketInfo;
 };
 
 export type RefundOrderRequest = {
