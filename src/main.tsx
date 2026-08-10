@@ -1,5 +1,10 @@
 import { CssBaseline, ThemeProvider, createTheme } from "@mui/material";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  MutationCache,
+  QueryClient,
+  QueryClientProvider,
+  matchQuery,
+} from "@tanstack/react-query";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router";
@@ -8,7 +13,22 @@ import { AppErrorBoundary } from "./components/elements/appErrorBoundary";
 import type { RegistrationDeskGateway } from "./gateways";
 
 const theme = createTheme({});
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 60 * 1000,
+      gcTime: 5 * 60 * 1000,
+      retry: 1,
+    },
+  },
+  mutationCache: new MutationCache({
+    onSuccess: async (_data, _variables, _onMutateResult, mutation) => {
+      await queryClient.invalidateQueries({
+        predicate: (query) => mutation.meta?.invalidates?.some((queryKey) => matchQuery({ queryKey }, query)) ?? false,
+      });
+    },
+  }),
+});
 
 type LocalMockModule = {
   MockRegistrationDeskGateway: new () => RegistrationDeskGateway;

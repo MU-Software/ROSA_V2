@@ -43,9 +43,15 @@ export type RegistrationDeskStatistics = {
   waiting_count: number;
 };
 
+export type OrderProductLookup = {
+  order: Order;
+  order_product_relation: Order["products"][number];
+};
+
 export interface RegistrationDeskGateway {
   searchOrders(params: SearchOrdersParams): Promise<Order[]>;
-  getOrderByProductScancode(scancode: OrderProductScancode): Promise<Order>;
+  getOrderProductRelation(order_product_relation_id: EntityId): Promise<OrderProductLookup>;
+  getOrderByProductScancode(scancode: OrderProductScancode): Promise<OrderProductLookup>;
   listOrdersByUserId(user_id: number): Promise<Order[]>;
   modifyOrderProduct(request: ModifyOrderProductRequest): Promise<Order>;
   refundOrder(request: RefundOrderRequest): Promise<Order>;
