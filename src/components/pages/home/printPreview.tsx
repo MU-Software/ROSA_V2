@@ -20,12 +20,6 @@ import {
   type OrderProductRelation,
 } from "../../../domain";
 
-const formatPrice = (value: number): string => new Intl.NumberFormat("ko-KR", {
-  style: "currency",
-  currency: "KRW",
-  maximumFractionDigits: 0,
-}).format(value);
-
 const QrPlaceholder: FC = () => (
   <Box
     sx={{
@@ -113,48 +107,47 @@ const BadgePreview: FC<{ product: OrderProductRelation }> = ({ product }) => {
 
 const ExchangeVoucherPreview: FC<{
   product: OrderProductRelation;
-  target: OrderProductOptionRelation;
-}> = ({ product, target }) => {
-  if (!target?.product_option) return null;
-
-  return (
-    <Paper
-      variant="outlined"
-      sx={{
-        width: "100%",
-        maxWidth: 560,
-        aspectRatio: "3 / 2",
-        mx: "auto",
-        p: { xs: 2, sm: 3 },
-        display: "grid",
-        gridTemplateColumns: "minmax(0, 1fr) auto",
-        gap: 2,
-        bgcolor: "common.white",
-        color: "common.black",
-        overflow: "hidden",
-      }}
-    >
-      <Stack sx={{ minWidth: 0, justifyContent: "space-between" }}>
-        <Box>
-          <Typography variant="overline" sx={{ fontWeight: 700 }}>유료 옵션 교환권</Typography>
-          <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.2 }}>
-            {target.product_option_group.name}
-          </Typography>
-          <Typography sx={{ mt: 0.75 }}>{target.product_option.name}</Typography>
-        </Box>
-        <Box>
-          <Typography variant="body2" sx={{ fontWeight: 700 }}>
-            {formatPrice(target.product_option.additional_price)}
-          </Typography>
-          <Typography variant="caption" color="text.secondary">
-            {product.id}
-          </Typography>
-        </Box>
-      </Stack>
-      <QrPlaceholder />
-    </Paper>
-  );
-};
+  targets: OrderProductOptionRelation[];
+}> = ({ product, targets }) => (
+  <Paper
+    variant="outlined"
+    sx={{
+      width: "100%",
+      maxWidth: 560,
+      aspectRatio: "3 / 2",
+      mx: "auto",
+      p: { xs: 2, sm: 3 },
+      display: "grid",
+      gridTemplateColumns: "minmax(0, 1fr) auto",
+      gap: 2,
+      bgcolor: "common.white",
+      color: "common.black",
+      overflow: "hidden",
+    }}
+  >
+    <Stack sx={{ minWidth: 0, justifyContent: "space-between" }}>
+      <Box>
+        <Typography variant="overline" sx={{ fontWeight: 700 }}>유료 옵션 교환권</Typography>
+        <Stack spacing={0.75} sx={{ mt: 0.5 }}>
+          {targets.map((target) => (
+            <Box key={target.id}>
+              <Typography sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+                {target.product_option_group.name}
+              </Typography>
+              <Typography variant="body2">{target.product_option?.name}</Typography>
+            </Box>
+          ))}
+        </Stack>
+      </Box>
+      <Box>
+        <Typography variant="caption" color="text.secondary">
+          {product.id}
+        </Typography>
+      </Box>
+    </Stack>
+    <QrPlaceholder />
+  </Paper>
+);
 
 export const PrintPreviewDialog: FC<{
   product: OrderProductRelation;
@@ -179,15 +172,9 @@ export const PrintPreviewDialog: FC<{
           {exchangeTargets.length > 0 && (
             <Stack spacing={2}>
               <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                유료 옵션 교환권 {exchangeTargets.length}장
+                유료 옵션 교환권 1장 · {exchangeTargets.length}개 항목
               </Typography>
-              {exchangeTargets.map((target) => (
-                <ExchangeVoucherPreview
-                  key={target.id}
-                  product={product}
-                  target={target}
-                />
-              ))}
+              <ExchangeVoucherPreview product={product} targets={exchangeTargets} />
             </Stack>
           )}
         </Stack>
