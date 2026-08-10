@@ -12,9 +12,14 @@ import {
 } from "@mui/icons-material";
 import {
   Box,
+  Button,
   Chip,
   Container,
   Divider,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   IconButton,
   ListItemIcon,
   ListItemText,
@@ -30,8 +35,18 @@ import {
   type Theme,
 } from "@mui/material";
 import { useMutation } from "@tanstack/react-query";
-import { useEffect, useMemo, useState, type FC, type MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FC, type MouseEvent } from "react";
 import { Link } from "react-router";
+import { QueryBoundary } from "../components/elements/queryBoundary";
+import {
+  AutomaticModeBanner,
+  AutomaticRegistrationFailure,
+  AutomaticRegistrationPanel,
+  MockQrInput,
+  type AutomaticProductDetailsController,
+  type AutomaticRegistrationProgress,
+  type AutomaticRegistrationStage,
+} from "../components/pages/home/automaticRegistration";
 import { MobileCameraInput } from "../components/pages/home/mobileCamera";
 import { OrderSearchWorkspace } from "../components/pages/home/orderSearch";
 import {
@@ -40,14 +55,28 @@ import {
 } from "../components/pages/home/sidebar";
 import { useAppContext, useTopBar } from "../contexts";
 import {
+  getAutomaticRegistrationUnavailableReason,
+  parseOrderProductScancode,
   transitionRegistration,
+  type OrderProductRelation,
   type RegistrationState,
 } from "../domain";
 import type {
+  RegistrationDeskConfiguration,
   RegistrationDeskGateway,
 } from "../gateways";
+import {
+  useModifyOrderProductMutation,
+  useRegistrationConfigurationQuery,
+  useRegistrationDeskQueryClient,
+  useRegistrationStatisticsQuery,
+} from "../hooks/useRegistrationDesk";
 import { useQrScanner } from "../hooks/useQrScanner";
+import { useQrTrigger } from "../hooks/useQrTrigger";
+import { createRegistrationPrintQueue } from "../printing/queue";
 import { getQrInputMode } from "../utils/platform";
+
+const DEFAULT_FAREWELL_DURATION_MS = 3000;
 
 type RegistrationStatePresentation = {
   label: string;
@@ -87,26 +116,130 @@ const REGISTRATION_STATE_PRESENTATION: Record<
 };
 
 export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gateway }) => {
-  const { registration_state: registrationState, setAppContext } = useAppContext();
-  const [isAutomaticRegistrationEnabled, setAutomaticRegistrationEnabled] = useState(false);
+  const {
+    active_order_product_scancode: activeOrderProductScancode,
+    automatic_registration_enabled: isAutomaticRegistrationEnabled,
+    order_product_relation: registrationProduct,
+    registration_state: registrationState,
+    setAppContext,
+  } = useAppContext();
+  const [automaticRegistrationStage, setAutomaticRegistrationStage] =
+    useState<AutomaticRegistrationStage>("lookup");
+  const [automaticFailureProduct, setAutomaticFailureProduct] =
+    useState<OrderProductRelation | null>(null);
+  const [completedPrintJobIds, setCompletedPrintJobIds] = useState<string[]>([]);
+  const [printingPrintJobId, setPrintingPrintJobId] = useState<string | null>(null);
+  const [farewellDurationMs, setFarewellDurationMs] = useState(DEFAULT_FAREWELL_DURATION_MS);
+  const [automaticRegistrationAvailable, setAutomaticRegistrationAvailable] = useState(true);
+  const [closeDeskDialogOpen, setCloseDeskDialogOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
-  const statisticsMutation = useMutation({
-    mutationFn: async () => {
-      if (!gateway) throw new Error("등록 통계 gateway가 준비되지 않았습니다.");
-      return gateway.getStatistics();
+  const automaticRunRef = useRef(false);
+  const registrationDeskQueryClient = useRegistrationDeskQueryClient(gateway);
+  const applyConfiguration = useCallback((configuration: RegistrationDeskConfiguration) => {
+    setFarewellDurationMs(configuration.automatic_check_in.farewell_duration_ms);
+    setAutomaticRegistrationAvailable(configuration.automatic_check_in.enabled);
+    if (!configuration.automatic_check_in.enabled) {
+      setAppContext((current) => ({
+        ...current,
+        automatic_registration_enabled: false,
+        active_order_product_scancode: null,
+      }));
+    }
+  }, [setAppContext]);
+  const runMockPrintJobs = async (product: OrderProductRelation): Promise<void> => {
+    const queue = createRegistrationPrintQueue(product);
+    setCompletedPrintJobIds([]);
+    setPrintingPrintJobId(null);
+    let entry = queue.dequeue();
+    while (entry) {
+      const entryId = entry.id;
+      setPrintingPrintJobId(entryId);
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 400));
+      setCompletedPrintJobIds((current) => [...current, entryId]);
+      entry = queue.dequeue();
+    }
+    setPrintingPrintJobId(null);
+  };
+  const automaticMarkUsedMutation = useModifyOrderProductMutation(gateway);
+  const automaticRegistrationMutation = useMutation({
+    mutationFn: async (rawScancode: string) => {
+      if (!gateway) throw new Error("등록 데스크 gateway가 준비되지 않았습니다.");
+
+      setAutomaticRegistrationStage("lookup");
+      const scancode = parseOrderProductScancode(rawScancode);
+      const lookup = await registrationDeskQueryClient.fetchOrderProductByScancode(scancode);
+      registrationDeskQueryClient.setOrderProduct(lookup);
+      setAutomaticFailureProduct(lookup.order_product_relation);
+      const unavailableReason = getAutomaticRegistrationUnavailableReason(
+        lookup.order,
+        lookup.order_product_relation,
+      );
+      if (unavailableReason) throw new Error(unavailableReason);
+      setAppContext((current) => ({
+        ...current,
+        registration_state: current.registration_state === "idle"
+          ? transitionRegistration(current.registration_state, "registering")
+          : current.registration_state,
+        order_product_relation: lookup.order_product_relation,
+        farewell_until: null,
+      }));
+
+      setAutomaticRegistrationStage("marking_used");
+      await automaticMarkUsedMutation.mutateAsync({
+        order_product_relation_id: lookup.order_product_relation.id,
+        status: "used",
+      });
+      const updatedLookup = await registrationDeskQueryClient.fetchOrderProduct(
+        lookup.order_product_relation.id,
+      );
+      const updatedProduct = updatedLookup.order_product_relation;
+
+      setAutomaticRegistrationStage("printing");
+      setAppContext((current) => ({
+        ...current,
+        order_product_relation: updatedProduct,
+      }));
+      await runMockPrintJobs(updatedProduct);
+      setAppContext((current) => ({
+        ...current,
+        registration_state: current.registration_state === "registering"
+          ? transitionRegistration(current.registration_state, "awaiting_completion")
+          : current.registration_state,
+        order_product_relation: updatedProduct,
+        farewell_until: null,
+      }));
+      return updatedProduct;
+    },
+    onSuccess: () => {
+      setAutomaticFailureProduct(null);
+    },
+    onError: () => {
+      setAppContext((current) => ({
+        ...current,
+        registration_state: current.registration_state === "registering"
+          ? transitionRegistration(current.registration_state, "idle")
+          : current.registration_state,
+        order_product_relation: null,
+        farewell_until: null,
+      }));
+    },
+    onSettled: () => {
+      automaticRunRef.current = false;
     },
   });
-  const { mutate: refreshStatistics } = statisticsMutation;
+  const automaticReprintMutation = useMutation({
+    mutationFn: runMockPrintJobs,
+  });
   const scanner = useQrScanner();
   const { start: startScanner, status: scannerStatus, stop: stopScanner } = scanner;
   const qrInputMode = getQrInputMode();
   const presentation = REGISTRATION_STATE_PRESENTATION[registrationState];
   const isDeskOpen = registrationState !== "closed";
+  const automaticOperationPending = automaticRegistrationMutation.isPending ||
+    automaticReprintMutation.isPending;
+  const hasActiveAutomaticProduct = registrationProduct !== null ||
+    automaticFailureProduct !== null;
   const isNarrow = useMediaQuery((theme: Theme) => theme.breakpoints.down("sm"));
-
-  useEffect(() => {
-    if (gateway) refreshStatistics();
-  }, [gateway, refreshStatistics]);
 
   useEffect(() => {
     if (qrInputMode !== "camera") return;
@@ -116,6 +249,39 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
       stopScanner();
     }
   }, [isDeskOpen, qrInputMode, scannerStatus, startScanner, stopScanner]);
+
+  const startAutomaticRegistration = useCallback((value: string) => {
+    if (
+      !isAutomaticRegistrationEnabled ||
+      registrationState !== "idle" ||
+      automaticRegistrationMutation.isPending ||
+      automaticRegistrationMutation.error ||
+      (activeOrderProductScancode === value && hasActiveAutomaticProduct) ||
+      automaticRunRef.current
+    ) return;
+
+    automaticRunRef.current = true;
+    setAppContext((current) => ({ ...current, active_order_product_scancode: value }));
+    setAutomaticFailureProduct(null);
+    setCompletedPrintJobIds([]);
+    setPrintingPrintJobId(null);
+    automaticReprintMutation.reset();
+    automaticRegistrationMutation.reset();
+    automaticRegistrationMutation.mutate(value);
+  }, [
+    automaticRegistrationMutation,
+    automaticReprintMutation,
+    activeOrderProductScancode,
+    hasActiveAutomaticProduct,
+    isAutomaticRegistrationEnabled,
+    registrationState,
+    setAppContext,
+  ]);
+
+  useQrTrigger({
+    cameraResult: scanner.result,
+    onDetected: ({ value }) => startAutomaticRegistration(value),
+  });
 
   useTopBar(useMemo(() => ({
     title: "ROSA",
@@ -140,9 +306,29 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
     ),
   }), [presentation.color, presentation.label]));
 
-  const toggleDesk = () => {
+  const closeDesk = () => {
+    setCloseDeskDialogOpen(false);
     setMenuAnchor(null);
+    setAppContext((current) => ({
+      ...current,
+      registration_state: current.registration_state === "closed"
+        ? current.registration_state
+        : transitionRegistration(current.registration_state, "closed"),
+      order_product_relation: null,
+      farewell_until: null,
+      automatic_registration_enabled: false,
+      active_order_product_scancode: null,
+    }));
+    setAutomaticFailureProduct(null);
+    setCompletedPrintJobIds([]);
+    setPrintingPrintJobId(null);
+    automaticReprintMutation.reset();
+    automaticRegistrationMutation.reset();
+  };
+
+  const toggleDesk = () => {
     if (registrationState === "closed") {
+      setMenuAnchor(null);
       setAppContext((current) => ({
         ...current,
         registration_state: transitionRegistration(current.registration_state, "idle"),
@@ -151,13 +337,90 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
       return;
     }
 
+    if (registrationState !== "idle") {
+      setMenuAnchor(null);
+      setCloseDeskDialogOpen(true);
+      return;
+    }
+    closeDesk();
+  };
+
+  const completeAutomaticRegistration = () => {
+    setAppContext((current) => {
+      if (current.registration_state !== "awaiting_completion") return current;
+      return {
+        ...current,
+        registration_state: transitionRegistration(current.registration_state, "idle"),
+        order_product_relation: null,
+        farewell_until: Date.now() + farewellDurationMs,
+        active_order_product_scancode: null,
+      };
+    });
+    automaticRegistrationMutation.reset();
+    setAutomaticRegistrationStage("lookup");
+    setCompletedPrintJobIds([]);
+    setPrintingPrintJobId(null);
+  };
+
+  const dismissAutomaticRegistrationError = () => {
+    setAppContext((current) => ({ ...current, active_order_product_scancode: null }));
+    setAutomaticFailureProduct(null);
+    setCompletedPrintJobIds([]);
+    setPrintingPrintJobId(null);
+    automaticReprintMutation.reset();
+    automaticRegistrationMutation.reset();
+  };
+
+  const reprintAutomaticProduct = (product: OrderProductRelation): Promise<void> => {
+    automaticReprintMutation.reset();
+    return automaticReprintMutation.mutateAsync(product);
+  };
+
+  const updateAutomaticProduct = (updatedProduct: OrderProductRelation) => {
+    setAppContext((current) => current.order_product_relation?.id === updatedProduct.id
+      ? { ...current, order_product_relation: updatedProduct }
+      : current);
+    setAutomaticFailureProduct((current) => current?.id === updatedProduct.id
+      ? updatedProduct
+      : current);
+  };
+
+  const handleAutomaticStatusChanged = (updatedProduct: OrderProductRelation) => {
     setAppContext((current) => ({
       ...current,
-      registration_state: transitionRegistration(current.registration_state, "closed"),
-      order_product_relation: null,
+      registration_state: current.registration_state === "idle" ||
+        current.registration_state === "awaiting_completion"
+        ? transitionRegistration(current.registration_state, "registering")
+        : current.registration_state,
+      order_product_relation: updatedProduct,
       farewell_until: null,
     }));
-    setAutomaticRegistrationEnabled(false);
+    setAutomaticFailureProduct(null);
+    setCompletedPrintJobIds([]);
+    setPrintingPrintJobId(null);
+    automaticRegistrationMutation.reset();
+  };
+
+  const setAutomaticRegistrationMode = (enabled: boolean) => {
+    setAppContext((current) => ({
+      ...current,
+      automatic_registration_enabled: enabled,
+      active_order_product_scancode: enabled ? current.active_order_product_scancode : null,
+    }));
+    setMenuAnchor(null);
+  };
+
+  const automaticProgress: AutomaticRegistrationProgress = {
+    stage: automaticRegistrationStage,
+    processing: automaticRegistrationMutation.isPending,
+    completedPrintJobIds,
+    printingPrintJobId,
+  };
+  const automaticProductDetails: AutomaticProductDetailsController = {
+    reprinting: automaticReprintMutation.isPending,
+    onProductUpdated: updateAutomaticProduct,
+    onStatusChanged: handleAutomaticStatusChanged,
+    onReprint: reprintAutomaticProduct,
   };
 
   return (
@@ -167,21 +430,28 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
         open={menuAnchor !== null}
         onClose={() => setMenuAnchor(null)}
       >
-        <MenuItem onClick={toggleDesk}>
+        <MenuItem
+          disabled={registrationState !== "closed" && automaticOperationPending}
+          onClick={toggleDesk}
+        >
           <ListItemIcon><PowerSettingsNew fontSize="small" /></ListItemIcon>
           <ListItemText>{isDeskOpen ? "데스크 닫기" : "데스크 열기"}</ListItemText>
         </MenuItem>
-        {isDeskOpen && (
-          <MenuItem onClick={() => setAutomaticRegistrationEnabled((enabled) => !enabled)}>
+        {gateway && isDeskOpen && automaticRegistrationAvailable && (
+          <MenuItem
+            disabled={automaticOperationPending}
+            onClick={() => setAutomaticRegistrationMode(!isAutomaticRegistrationEnabled)}
+          >
             <ListItemIcon><AutoModeOutlined fontSize="small" /></ListItemIcon>
             <ListItemText>자동 접수</ListItemText>
             <Switch
               size="small"
               edge="end"
               checked={isAutomaticRegistrationEnabled}
+              disabled={automaticOperationPending}
               slotProps={{ input: { "aria-label": "자동 접수" } }}
               onClick={(event) => event.stopPropagation()}
-              onChange={(_, checked) => setAutomaticRegistrationEnabled(checked)}
+              onChange={(_, checked) => setAutomaticRegistrationMode(checked)}
             />
           </MenuItem>
         )}
@@ -202,7 +472,30 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
         </MenuItem>
       </Menu>
 
+      <Dialog open={closeDeskDialogOpen} onClose={() => setCloseDeskDialogOpen(false)}>
+        <DialogTitle>진행 중인 접수를 종료할까요?</DialogTitle>
+        <DialogContent>
+          현재 주문상품과 접수 진행 상태가 초기화됩니다. 접수 완료 전에는 종료 인사가
+          표시되지 않습니다.
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setCloseDeskDialogOpen(false)}>취소</Button>
+          <Button color="error" onClick={closeDesk}>데스크 닫기</Button>
+        </DialogActions>
+      </Dialog>
+
       <Container maxWidth="xl" sx={{ py: { xs: 2, md: 3 } }}>
+        {gateway && (
+          <QueryBoundary pendingFallback={null}>
+            <RegistrationConfigurationQuery gateway={gateway} onLoad={applyConfiguration} />
+          </QueryBoundary>
+        )}
+        {isAutomaticRegistrationEnabled && (
+          <AutomaticModeBanner
+            processing={automaticOperationPending}
+            onDisable={() => setAutomaticRegistrationMode(false)}
+          />
+        )}
         <Box
           sx={{
             display: "grid",
@@ -219,13 +512,37 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
               overflow: "hidden",
             }}
           >
-            {registrationState === "idle" || registrationState === "registering" ? (
+            {gateway && (automaticRegistrationMutation.isPending ||
+            (registrationState === "awaiting_completion" && registrationProduct)) ? (
+              <AutomaticRegistrationPanel
+                gateway={gateway}
+                progress={automaticProgress}
+                details={automaticProductDetails}
+                onComplete={completeAutomaticRegistration}
+              />
+            ) : gateway && automaticRegistrationMutation.error ? (
+              <AutomaticRegistrationFailure
+                gateway={gateway}
+                error={automaticRegistrationMutation.error}
+                product={automaticFailureProduct}
+                details={automaticProductDetails}
+                onDismiss={dismissAutomaticRegistrationError}
+              />
+            ) : registrationState === "idle" || registrationState === "registering" ? (
               <OrderSearchWorkspace gateway={gateway}>
-                {qrInputMode === "camera" ? (
-                  <MobileCameraInput scanner={scanner} />
-                ) : (
-                  <RegistrationStateContent presentation={presentation} isDeskOpen={isDeskOpen} />
-                )}
+                <Stack sx={{ height: "100%", alignItems: "center" }}>
+                  {qrInputMode === "camera" ? (
+                    <MobileCameraInput scanner={scanner} />
+                  ) : (
+                    <RegistrationStateContent presentation={presentation} isDeskOpen={isDeskOpen} />
+                  )}
+                  {import.meta.env.DEV && isAutomaticRegistrationEnabled && registrationState === "idle" && (
+                    <MockQrInput
+                      disabled={automaticRegistrationMutation.isPending}
+                      onSubmit={startAutomaticRegistration}
+                    />
+                  )}
+                </Stack>
               </OrderSearchWorkspace>
             ) : (
               <RegistrationStateContent presentation={presentation} isDeskOpen={isDeskOpen} />
@@ -233,14 +550,20 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
           </Paper>
 
           <Stack spacing={3}>
-            <RegistrationStatisticsPanel
-              defaultExpanded={!isNarrow}
-              statistics={statisticsMutation.data ?? null}
-              error={gateway ? statisticsMutation.error?.message ?? null : "등록 통계 gateway가 준비되지 않았습니다."}
-              requestedAt={statisticsMutation.submittedAt || null}
-              refreshing={statisticsMutation.isPending}
-              onRefresh={refreshStatistics}
-            />
+            {gateway ? (
+              <QueryBoundary>
+                <RegistrationStatisticsQuery gateway={gateway} defaultExpanded={!isNarrow} />
+              </QueryBoundary>
+            ) : (
+              <RegistrationStatisticsPanel
+                defaultExpanded={!isNarrow}
+                statistics={null}
+                error="등록 통계 gateway가 준비되지 않았습니다."
+                requestedAt={null}
+                refreshing={false}
+                onRefresh={() => undefined}
+              />
+            )}
             <DeviceStatusPanel
               defaultExpanded={!isNarrow}
               camera={qrInputMode === "camera" ? { status: scanner.status, error: scanner.error } : undefined}
@@ -249,6 +572,34 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
         </Box>
       </Container>
     </Box>
+  );
+};
+
+const RegistrationConfigurationQuery: FC<{
+  gateway: RegistrationDeskGateway;
+  onLoad: (configuration: RegistrationDeskConfiguration) => void;
+}> = ({ gateway, onLoad }) => {
+  const { data } = useRegistrationConfigurationQuery(gateway);
+
+  useEffect(() => onLoad(data), [data, onLoad]);
+  return null;
+};
+
+const RegistrationStatisticsQuery: FC<{
+  gateway: RegistrationDeskGateway;
+  defaultExpanded: boolean;
+}> = ({ gateway, defaultExpanded }) => {
+  const { data, dataUpdatedAt, isFetching, refetch } = useRegistrationStatisticsQuery(gateway);
+
+  return (
+    <RegistrationStatisticsPanel
+      defaultExpanded={defaultExpanded}
+      statistics={data}
+      error={null}
+      requestedAt={dataUpdatedAt}
+      refreshing={isFetching}
+      onRefresh={() => void refetch()}
+    />
   );
 };
 
