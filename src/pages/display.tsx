@@ -1,6 +1,6 @@
 import { Box, Stack, Typography } from "@mui/material";
 import { useEffect, useState, type FC } from "react";
-import type { RegistrationSession } from "../apis/registrationSession";
+import type { PersistedAppState } from "../apis/appState";
 import { useAppContext } from "../contexts";
 
 type DisplayMessage = {
@@ -9,10 +9,10 @@ type DisplayMessage = {
 };
 
 const getDisplayMessage = (
-  session: RegistrationSession,
+  state: PersistedAppState,
   farewell: boolean,
 ): DisplayMessage => {
-  const ticket = session.order_product_relation?.ticket_info;
+  const ticket = state.order_product_relation?.ticket_info;
 
   if (farewell) {
     return {
@@ -20,19 +20,19 @@ const getDisplayMessage = (
       subtitle: "Happy PyCon Korea!",
     };
   }
-  if (session.registration_state === "closed") {
+  if (state.registration_state === "closed") {
     return {
       title: "옆 창구를 이용해주세요.",
       subtitle: "Please use another desk.",
     };
   }
-  if (session.registration_state === "idle") {
+  if (state.registration_state === "idle") {
     return {
       title: "PyCon Korea",
       subtitle: "등록 데스크 · Registration Desk",
     };
   }
-  if (session.registration_state === "awaiting_completion") {
+  if (state.registration_state === "awaiting_completion") {
     return {
       title: "등록을 진행하고 있습니다.",
       subtitle: null,
@@ -46,19 +46,19 @@ const getDisplayMessage = (
 };
 
 export const ExternalDisplayPage: FC = () => {
-  const session = useAppContext();
+  const appState = useAppContext();
   const [now, setNow] = useState(Date.now);
 
   useEffect(() => {
-    if (!session.farewell_until) return;
+    if (!appState.farewell_until) return;
 
-    const remaining = Math.max(0, session.farewell_until - Date.now());
+    const remaining = Math.max(0, appState.farewell_until - Date.now());
     const timeout = window.setTimeout(() => setNow(Date.now()), remaining);
     return () => window.clearTimeout(timeout);
-  }, [session.farewell_until]);
+  }, [appState.farewell_until]);
 
-  const farewell = session.farewell_until !== null && session.farewell_until > now;
-  const message = getDisplayMessage(session, farewell);
+  const farewell = appState.farewell_until !== null && appState.farewell_until > now;
+  const message = getDisplayMessage(appState, farewell);
 
   return (
     <Box

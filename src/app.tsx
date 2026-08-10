@@ -10,11 +10,8 @@ import {
   type SetStateAction,
 } from "react";
 import { Route, Routes, useLocation } from "react-router";
+import type { PersistedAppState } from "./apis/appState";
 import { installDeviceCleanup } from "./apis/deviceLifecycle";
-import {
-  saveRegistrationSession,
-  type RegistrationSession,
-} from "./apis/registrationSession";
 import { serialManager } from "./apis/serial";
 import { TopBar } from "./components/elements/topbar";
 import { AppContext, loadAppConfig, saveAppConfig, type AppContextData } from "./contexts";
@@ -23,7 +20,7 @@ import { ExternalDisplayPage } from "./pages/display";
 import { HomePage } from "./pages/home";
 import { NotFoundPage } from "./pages/notFound";
 import type { RegistrationDeskGateway } from "./gateways";
-import { useLocalStorageSession } from "./hooks/useLocalStorageSession";
+import { useLocalStorageAppState } from "./hooks/useLocalStorageAppState";
 
 export const App: FC<{ registrationDeskGateway: RegistrationDeskGateway | null }> = ({
   registrationDeskGateway,
@@ -33,29 +30,20 @@ export const App: FC<{ registrationDeskGateway: RegistrationDeskGateway | null }
   const [appState, setAppState] = useState<AppContextData>(loadAppConfig);
   const appStateRef = useRef(appState);
   const setAppContext = useCallback<Dispatch<SetStateAction<AppContextData>>>((nextState) => {
-    const currentState = appStateRef.current;
     const updatedState = typeof nextState === "function"
-      ? nextState(currentState)
+      ? nextState(appStateRef.current)
       : nextState;
     appStateRef.current = updatedState;
     setAppState(updatedState);
     saveAppConfig(updatedState);
-
-    if (
-      currentState.registration_state !== updatedState.registration_state ||
-      currentState.order_product_relation !== updatedState.order_product_relation ||
-      currentState.farewell_until !== updatedState.farewell_until
-    ) {
-      saveRegistrationSession(updatedState);
-    }
   }, []);
 
-  const applyRegistrationSession = useCallback((registrationSession: RegistrationSession) => {
-    const updatedState = { ...appStateRef.current, ...registrationSession };
+  const applyPersistedAppState = useCallback((persistedAppState: PersistedAppState) => {
+    const updatedState = { ...appStateRef.current, ...persistedAppState };
     appStateRef.current = updatedState;
     setAppState(updatedState);
   }, []);
-  useLocalStorageSession(applyRegistrationSession);
+  useLocalStorageAppState(applyPersistedAppState);
 
   useEffect(() => {
     if (isExternalDisplay) return;
