@@ -21,28 +21,27 @@ import {
   Typography,
   type ChipProps,
 } from "@mui/material";
-import { useMutation } from "@tanstack/react-query";
-import { useState, type FC, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FC, type FormEvent, type ReactNode } from "react";
+import { QueryBoundary } from "../../elements/queryBoundary";
 import { useAppContext } from "../../../contexts";
 import {
   canFullyRefundOrder,
-  canTransitionOrderProductStatus,
-  getPaidOptionExchangeTargets,
   transitionRegistration,
   type EntityId,
   type Order,
   type OrderProductRelation,
   type OrderProductStatus,
   type PaymentHistoryStatus,
-  type TicketInfo,
 } from "../../../domain";
-import type {
-  ModifyOrderProductRequest,
-  RefundOrderRequest,
-  RegistrationDeskGateway,
-} from "../../../gateways";
-import { PrintPreviewDialog } from "./printPreview";
-import { TicketInfoEditor } from "./ticketInfoEditor";
+import type { RegistrationDeskGateway } from "../../../gateways";
+import {
+  useOrderProductQuery,
+  useOrderSearchFetching,
+  useOrderSearchQuery,
+  useRefundOrderMutation,
+  useRegistrationDeskQueryClient,
+} from "../../../hooks/useRegistrationDesk";
+import { OrderProductDetails } from "./orderProductDetails";
 
 const PAYMENT_STATUS_PRESENTATION: Record<PaymentHistoryStatus, {
   label: string;
@@ -84,23 +83,20 @@ const formatPrice = (value: number): string => new Intl.NumberFormat("ko-KR", {
 export const OrderSearchWorkspace: FC<{
   gateway: RegistrationDeskGateway | null;
   children: ReactNode;
-  onRegistrationChanged: () => void;
 }> = ({
   gateway,
   children,
-  onRegistrationChanged,
 }) => {
+  const registrationDeskQueryClient = useRegistrationDeskQueryClient(gateway);
   const {
     order_product_relation: restoredProduct,
     setAppContext,
   } = useAppContext();
   const [query, setQuery] = useState("");
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
-  const [selectedProductId, setSelectedProductId] = useState<EntityId | null>(restoredProduct?.id ?? null);
-  const updateRegistrationProduct = (product: OrderProductRelation) => {
-    setAppContext((current) => ({ ...current, order_product_relation: product }));
-  };
+  const [submittedQuery, setSubmittedQuery] = useState<string | null>(null);
+  const [selectedOrderId, setSelectedOrderId] = useState<EntityId | null>(null);
+  const [selectedProductId, setSelectedProductId] = useState<EntityId | null>(null);
+  const searching = useOrderSearchFetching(submittedQuery);
   const openRegistrationProduct = (product: OrderProductRelation) => {
     setAppContext((current) => ({
       ...current,
@@ -120,81 +116,31 @@ export const OrderSearchWorkspace: FC<{
         : current.registration_state,
       order_product_relation: null,
       farewell_until: null,
+      active_order_product_scancode: null,
     }));
   };
-  const updateOrder = (updatedOrder: Order) => {
-    setOrders((current) => current.map((order) =>
-      order.id === updatedOrder.id ? updatedOrder : order));
-    setSelectedOrder(updatedOrder);
-    const updatedProduct = updatedOrder.products.find(({ id }) => id === selectedProductId);
-    if (updatedProduct) updateRegistrationProduct(updatedProduct);
-  };
-  const searchMutation = useMutation({
-    mutationFn: async (searchQuery: string) => {
-      if (!gateway) throw new Error("주문 검색 gateway가 준비되지 않았습니다.");
-      return gateway.searchOrders({ query: searchQuery });
-    },
-    onSuccess: setOrders,
-  });
-  const modifyOptionMutation = useMutation({
-    mutationFn: async (request: ModifyOrderProductRequest) => {
-      if (!gateway) throw new Error("주문상품 수정 gateway가 준비되지 않았습니다.");
-      return gateway.modifyOrderProduct(request);
-    },
-    onSuccess: updateOrder,
-  });
-  const modifyStatusMutation = useMutation({
-    mutationFn: async (request: ModifyOrderProductRequest) => {
-      if (!gateway) throw new Error("주문상품 수정 gateway가 준비되지 않았습니다.");
-      return gateway.modifyOrderProduct(request);
-    },
-    onSuccess: (updatedOrder) => {
-      updateOrder(updatedOrder);
-      onRegistrationChanged();
-    },
-  });
-  const modifyTicketInfoMutation = useMutation({
-    mutationFn: async (request: ModifyOrderProductRequest) => {
-      if (!gateway) throw new Error("참가자 정보 수정 gateway가 준비되지 않았습니다.");
-      return gateway.modifyOrderProduct(request);
-    },
-    onSuccess: updateOrder,
-  });
-  const refundMutation = useMutation({
-    mutationFn: async (request: RefundOrderRequest) => {
-      if (!gateway) throw new Error("주문 환불 gateway가 준비되지 않았습니다.");
-      return gateway.refundOrder(request);
-    },
-    onSuccess: (updatedOrder) => {
-      updateOrder(updatedOrder);
-      onRegistrationChanged();
-    },
-  });
-  const hasSearched = searchMutation.status !== "idle";
-  const showIdleContent = !!gateway && !searchMutation.isPending && !searchMutation.error &&
-    !hasSearched && !selectedOrder && !restoredProduct;
+  const activeProductId = selectedProductId ??
+    (selectedOrderId ? null : restoredProduct?.id) ?? null;
+  const showIdleContent = !!gateway && !submittedQuery && !activeProductId;
 
   const search = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const normalizedQuery = query.trim();
-    if (!normalizedQuery || searchMutation.isPending) return;
-    if (selectedProductId) clearRegistrationProduct();
-    setSelectedOrder(null);
+    if (!normalizedQuery || searching) return;
+    if (restoredProduct) clearRegistrationProduct();
+    setSelectedOrderId(null);
     setSelectedProductId(null);
-    searchMutation.mutate(normalizedQuery);
+    if (submittedQuery === normalizedQuery) {
+      void registrationDeskQueryClient.refetchOrderSearch(normalizedQuery);
+    }
+    setSubmittedQuery(normalizedQuery);
   };
 
   const reset = () => {
-    if (selectedProductId) clearRegistrationProduct();
+    if (restoredProduct) clearRegistrationProduct();
     setQuery("");
-    setOrders([]);
-    setSelectedOrder(null);
-    setSelectedProductId(null);
-    searchMutation.reset();
-  };
-
-  const selectOrder = (order: Order) => {
-    setSelectedOrder(order);
+    setSubmittedQuery(null);
+    setSelectedOrderId(null);
     setSelectedProductId(null);
   };
 
@@ -208,10 +154,6 @@ export const OrderSearchWorkspace: FC<{
     clearRegistrationProduct();
   };
 
-  const selectedProduct = selectedOrder?.products.find(
-    ({ id }) => id === selectedProductId,
-  ) ?? (restoredProduct?.id === selectedProductId ? restoredProduct : null);
-
   return (
     <Stack sx={{ flex: 1, minHeight: 0 }}>
       <Box component="form" onSubmit={search} sx={{ px: { xs: 1.5, sm: 2, md: 3 }, p: 2 }}>
@@ -222,15 +164,15 @@ export const OrderSearchWorkspace: FC<{
             label="주문 검색"
             placeholder="이름, 이메일, 전화번호 또는 주문번호"
             value={query}
-            disabled={!gateway || searchMutation.isPending}
+            disabled={!gateway || searching}
             onChange={(event) => setQuery(event.target.value)}
           />
           <IconButton
             type="submit"
-            disabled={!gateway || !query.trim() || searchMutation.isPending}
+            disabled={!gateway || !query.trim() || searching}
             sx={{ border: 1, borderColor: "divider", borderRadius: 1 }}
           >
-            {searchMutation.isPending ? <CircularProgress size={18} /> : <SearchOutlined />}
+            {searching ? <CircularProgress size={18} /> : <SearchOutlined />}
           </IconButton>
         </Stack>
       </Box>
@@ -253,67 +195,98 @@ export const OrderSearchWorkspace: FC<{
           <Box sx={{ position: "relative", zIndex: 1, minHeight: "100%", bgcolor: "background.paper" }}>
             {!gateway ? (
               <Alert severity="warning" sx={{ m: 2 }}>주문 검색 gateway가 준비되지 않았습니다.</Alert>
-            ) : searchMutation.isPending ? (
-              <Box sx={{ minHeight: 240, display: "grid", placeItems: "center" }}>
-                <Stack spacing={1.5} sx={{ alignItems: "center" }}>
-                  <CircularProgress size={30} />
-                  <Typography color="text.secondary">주문을 검색하고 있습니다.</Typography>
-                </Stack>
-              </Box>
-            ) : searchMutation.error ? (
-              <Stack spacing={2} sx={{ p: { xs: 2, md: 3 } }}>
-                <Alert severity="error">{searchMutation.error.message}</Alert>
-                <Button variant="outlined" onClick={() => searchMutation.mutate(query.trim())}>다시 검색</Button>
-              </Stack>
-            ) : selectedProduct ? (
-              <OrderProductDetails
-                orderName={selectedOrder?.name ?? "저장된 주문상품"}
-                backLabel={selectedOrder ? "주문 상세" : "닫기"}
-                product={selectedProduct}
-                onBack={closeProduct}
-                modifying={modifyOptionMutation.isPending}
-                modifyError={modifyOptionMutation.error?.message ?? null}
-                onClearModifyError={modifyOptionMutation.reset}
-                onModifyOption={(optionId, customResponse) => modifyOptionMutation.mutateAsync({
-                  order_product_relation_id: selectedProduct.id,
-                  options: [{ id: optionId, custom_response: customResponse }],
-                })}
-                statusChanging={modifyStatusMutation.isPending}
-                statusError={modifyStatusMutation.error?.message ?? null}
-                onClearStatusError={modifyStatusMutation.reset}
-                onChangeStatus={(nextStatus) => modifyStatusMutation.mutateAsync({
-                  order_product_relation_id: selectedProduct.id,
-                  status: nextStatus,
-                })}
-                ticketInfoSaving={modifyTicketInfoMutation.isPending}
-                ticketInfoError={modifyTicketInfoMutation.error?.message ?? null}
-                onClearTicketInfoError={modifyTicketInfoMutation.reset}
-                onModifyTicketInfo={(ticketInfo) => modifyTicketInfoMutation.mutateAsync({
-                  order_product_relation_id: selectedProduct.id,
-                  ticket_info: ticketInfo,
-                })}
-              />
-            ) : selectedOrder ? (
-              <OrderDetails
-                order={selectedOrder}
-                onBack={() => setSelectedOrder(null)}
-                onSelectProduct={selectProduct}
-                refunding={refundMutation.isPending}
-                refundError={refundMutation.error?.message ?? null}
-                onClearRefundError={refundMutation.reset}
-                onRefund={(otp) => refundMutation.mutateAsync({ order_id: selectedOrder.id, otp })}
-              />
-            ) : (
-              <OrderSearchResults
-                orders={orders}
-                onReset={reset}
-                onSelect={selectOrder}
-              />
-            )}
+            ) : activeProductId ? (
+              <QueryBoundary resetKeys={[activeProductId]}>
+                <OrderProductDetailsQuery
+                  gateway={gateway}
+                  productId={activeProductId}
+                  orderName={selectedOrderId ? undefined : "저장된 주문상품"}
+                  backLabel={selectedOrderId ? "주문 상세" : "닫기"}
+                  onBack={closeProduct}
+                />
+              </QueryBoundary>
+            ) : submittedQuery ? (
+              <QueryBoundary resetKeys={[submittedQuery]}>
+                <OrderSearchQueryContent
+                  gateway={gateway}
+                  query={submittedQuery}
+                  selectedOrderId={selectedOrderId}
+                  onReset={reset}
+                  onSelectOrder={setSelectedOrderId}
+                  onBack={() => setSelectedOrderId(null)}
+                  onSelectProduct={selectProduct}
+                />
+              </QueryBoundary>
+            ) : null}
           </Box>
         )}
       </Box>
     </Stack>
+  );
+};
+
+const OrderProductDetailsQuery: FC<{
+  gateway: RegistrationDeskGateway;
+  productId: EntityId;
+  orderName?: string;
+  backLabel: string;
+  onBack: () => void;
+}> = ({ gateway, productId, orderName, backLabel, onBack }) => {
+  const { data } = useOrderProductQuery(gateway, productId);
+  const { setAppContext } = useAppContext();
+
+  useEffect(() => {
+    setAppContext((current) => current.order_product_relation?.id === productId
+      ? { ...current, order_product_relation: data.order_product_relation }
+      : current);
+  }, [data.order_product_relation, productId, setAppContext]);
+
+  return (
+    <OrderProductDetails
+      product={data.order_product_relation}
+      gateway={gateway}
+      navigation={{ orderName: orderName ?? data.order.name, backLabel, onBack }}
+    />
+  );
+};
+
+const OrderSearchQueryContent: FC<{
+  gateway: RegistrationDeskGateway;
+  query: string;
+  selectedOrderId: EntityId | null;
+  onReset: () => void;
+  onSelectOrder: (id: EntityId) => void;
+  onBack: () => void;
+  onSelectProduct: (product: OrderProductRelation) => void;
+}> = ({
+  gateway,
+  query,
+  selectedOrderId,
+  onReset,
+  onSelectOrder,
+  onBack,
+  onSelectProduct,
+}) => {
+  const { data: orders } = useOrderSearchQuery(gateway, query);
+  const selectedOrder = orders.find(({ id }) => id === selectedOrderId) ?? null;
+  const refundMutation = useRefundOrderMutation(gateway);
+
+  return selectedOrder ? (
+    <OrderDetails
+      order={selectedOrder}
+      onBack={onBack}
+      onSelectProduct={onSelectProduct}
+      refunding={refundMutation.isPending}
+      refundError={refundMutation.error?.message ?? null}
+      onClearRefundError={refundMutation.reset}
+      onRefund={(otp) => refundMutation.mutateAsync({ order_id: selectedOrder.id, otp })}
+    />
+  ) : (
+    <OrderSearchResults
+      orders={orders}
+      onReset={onReset}
+      onSelect={(order) => onSelectOrder(order.id)}
+    />
   );
 };
 
@@ -644,378 +617,5 @@ const OrderProductSummary: FC<{
         </Button>
       </Stack>
     </Paper>
-  );
-};
-
-const OrderProductDetails: FC<{
-  orderName: string;
-  backLabel: string;
-  product: OrderProductRelation;
-  onBack: () => void;
-  modifying: boolean;
-  modifyError: string | null;
-  onClearModifyError: () => void;
-  onModifyOption: (optionId: EntityId, customResponse: string | null) => Promise<Order>;
-  statusChanging: boolean;
-  statusError: string | null;
-  onClearStatusError: () => void;
-  onChangeStatus: (nextStatus: OrderProductStatus) => Promise<Order>;
-  ticketInfoSaving: boolean;
-  ticketInfoError: string | null;
-  onClearTicketInfoError: () => void;
-  onModifyTicketInfo: (ticketInfo: TicketInfo) => Promise<Order>;
-}> = ({
-  orderName,
-  backLabel,
-  product,
-  onBack,
-  modifying,
-  modifyError,
-  onClearModifyError,
-  onModifyOption,
-  statusChanging,
-  statusError,
-  onClearStatusError,
-  onChangeStatus,
-  ticketInfoSaving,
-  ticketInfoError,
-  onClearTicketInfoError,
-  onModifyTicketInfo,
-}) => {
-  const [editingOptionId, setEditingOptionId] = useState<EntityId | null>(null);
-  const [customResponse, setCustomResponse] = useState("");
-  const [statusDialogOpen, setStatusDialogOpen] = useState(false);
-  const [ticketInfoEditorOpen, setTicketInfoEditorOpen] = useState(false);
-  const [printPreviewOpen, setPrintPreviewOpen] = useState(false);
-  const status = PRODUCT_STATUS_PRESENTATION[product.status];
-  const ticket = product.ticket_info;
-  const optionsEditable = product.status !== "used" && product.status !== "refunded";
-  const ticketInfoEditable = product.status === "paid" || product.status === "used";
-  const exchangeTargetCount = getPaidOptionExchangeTargets(product).length;
-  const printArtifactCount = (product.is_ticket && ticket ? 1 : 0) + exchangeTargetCount;
-  const previewAvailable = printArtifactCount > 0 &&
-    (product.status === "paid" || product.status === "used");
-  const nextStatus: OrderProductStatus | null = product.status === "paid"
-    ? "used"
-    : product.status === "used" ? "paid" : null;
-  const statusChangeAllowed = nextStatus !== null && canTransitionOrderProductStatus(
-    product.status,
-    nextStatus,
-  );
-  const statusActionLabel = nextStatus === "used" ? "사용 처리" : "사용 취소";
-  const busy = modifying || statusChanging || ticketInfoSaving;
-
-  const beginOptionEdit = (optionId: EntityId, value: string | null) => {
-    onClearModifyError();
-    setEditingOptionId(optionId);
-    setCustomResponse(value ?? "");
-  };
-
-  const cancelOptionEdit = () => {
-    onClearModifyError();
-    setEditingOptionId(null);
-    setCustomResponse("");
-  };
-
-  const saveOption = async (optionId: EntityId) => {
-    const normalizedResponse = customResponse.trim() || null;
-    try {
-      await onModifyOption(optionId, normalizedResponse);
-    } catch {
-      return;
-    }
-    setEditingOptionId(null);
-    setCustomResponse("");
-  };
-
-  const openStatusDialog = () => {
-    onClearStatusError();
-    setStatusDialogOpen(true);
-  };
-
-  const closeStatusDialog = () => {
-    if (statusChanging) return;
-    onClearStatusError();
-    setStatusDialogOpen(false);
-  };
-
-  const changeStatus = async () => {
-    if (!nextStatus) return;
-    try {
-      await onChangeStatus(nextStatus);
-    } catch {
-      return;
-    }
-    setStatusDialogOpen(false);
-  };
-
-  const openTicketInfoEditor = () => {
-    onClearTicketInfoError();
-    setTicketInfoEditorOpen(true);
-  };
-
-  const closeTicketInfoEditor = () => {
-    onClearTicketInfoError();
-    setTicketInfoEditorOpen(false);
-  };
-
-  return (
-    <Stack sx={{ minHeight: 0 }}>
-      <Stack
-        direction="row"
-        spacing={1}
-        sx={{ px: { xs: 1.5, md: 2 }, py: 1, alignItems: "center" }}
-      >
-        <Button size="small" startIcon={<ArrowBack />} onClick={onBack}>{backLabel}</Button>
-      </Stack>
-      <Divider />
-
-      <Stack spacing={3} sx={{ p: { xs: 2, md: 3 }, overflowY: "auto" }}>
-        <Stack spacing={1}>
-          <Typography variant="caption" color="text.secondary">{orderName}</Typography>
-          <Stack
-            direction={{ xs: "column", sm: "row" }}
-            spacing={1}
-            sx={{ alignItems: { xs: "flex-start", sm: "center" }, justifyContent: "space-between" }}
-          >
-            <Box sx={{ minWidth: 0 }}>
-              <Typography variant="h6" sx={{ fontWeight: 700 }}>{product.product.name}</Typography>
-              <Typography variant="caption" color="text.secondary">{product.id}</Typography>
-            </Box>
-            <Stack direction="row" spacing={0.75}>
-              <Chip size="small" variant="outlined" label={product.is_ticket ? "티켓" : "일반 상품"} />
-              <Chip size="small" color={status.color} label={status.label} />
-            </Stack>
-          </Stack>
-
-          <Stack direction="row" spacing={3} useFlexGap sx={{ flexWrap: "wrap" }}>
-            <DetailValue label="상품 금액" value={formatPrice(product.price)} />
-            <DetailValue label="기부금" value={formatPrice(product.donation_price)} />
-          </Stack>
-
-          {product.not_refundable_reason && (
-            <Alert severity="warning">{product.not_refundable_reason}</Alert>
-          )}
-        </Stack>
-
-        {statusChangeAllowed && (
-          <Stack spacing={1}>
-            <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>주문상품 작업</Typography>
-            <Paper variant="outlined" sx={{ p: 2 }}>
-              <Stack
-                direction={{ xs: "column", sm: "row" }}
-                spacing={1.5}
-                sx={{ alignItems: { xs: "stretch", sm: "center" }, justifyContent: "space-between" }}
-              >
-                <Box>
-                  <Typography sx={{ fontWeight: 600 }}>{statusActionLabel}</Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    {nextStatus === "used"
-                      ? "현장에서 상품 제공을 확인한 뒤 사용 완료로 변경합니다."
-                      : "잘못 처리한 상품을 사용 대기 상태로 되돌립니다."}
-                  </Typography>
-                </Box>
-                <Button
-                  variant={nextStatus === "used" ? "contained" : "outlined"}
-                  color={nextStatus === "used" ? "primary" : "warning"}
-                  disabled={busy || editingOptionId !== null}
-                  onClick={openStatusDialog}
-                >
-                  {statusActionLabel}
-                </Button>
-              </Stack>
-            </Paper>
-          </Stack>
-        )}
-
-        {ticket && (
-          <Stack spacing={1}>
-            <Stack direction="row" spacing={1} sx={{ alignItems: "center", justifyContent: "space-between" }}>
-              <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>참가자 정보</Typography>
-              {ticketInfoEditable && (
-                <Button
-                  size="small"
-                  disabled={busy || ticketInfoSaving}
-                  onClick={openTicketInfoEditor}
-                >
-                  수정
-                </Button>
-              )}
-            </Stack>
-            <Paper variant="outlined" sx={{ p: 2 }}>
-              <Typography>{ticket.name}</Typography>
-              {ticket.organization && (
-                <Typography variant="body2" color="text.secondary">{ticket.organization}</Typography>
-              )}
-              <Typography variant="body2" color="text.secondary">
-                {[ticket.email, ticket.phone].filter(Boolean).join(" · ")}
-              </Typography>
-              {ticket.contribution_message && (
-                <Typography variant="body2" sx={{ mt: 1.5 }}>
-                  {ticket.contribution_message}
-                </Typography>
-              )}
-            </Paper>
-          </Stack>
-        )}
-
-        <Stack spacing={1}>
-          <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-            상품 옵션 {product.options.length}개
-          </Typography>
-          {modifyError && <Alert severity="error">{modifyError}</Alert>}
-          {product.options.length === 0 ? (
-            <Alert severity="info">선택된 상품 옵션이 없습니다.</Alert>
-          ) : (
-            <Paper variant="outlined" sx={{ overflow: "hidden" }}>
-              <Stack divider={<Divider flexItem />}>
-                {product.options.map((option) => {
-                  const value = option.custom_response ?? option.product_option?.name ?? "선택 없음";
-                  const additionalPrice = option.product_option?.additional_price ?? 0;
-                  const customResponseOption = option.product_option_group.is_custom_response;
-                  const editing = editingOptionId === option.id;
-                  const responseRequired = option.product_option_group.placeholder_mode === "required";
-
-                  if (editing) {
-                    return (
-                      <Stack key={option.id} spacing={1.5} sx={{ p: 1.5 }}>
-                        <Box>
-                          <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                            {option.product_option_group.name}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">직접 응답</Typography>
-                        </Box>
-                        <TextField
-                          multiline
-                          minRows={2}
-                          size="small"
-                          label="응답"
-                          value={customResponse}
-                          disabled={busy}
-                          required={responseRequired}
-                          onChange={(event) => setCustomResponse(event.target.value)}
-                        />
-                        <Stack direction="row" spacing={1} sx={{ justifyContent: "flex-end" }}>
-                          <Button size="small" disabled={busy} onClick={cancelOptionEdit}>취소</Button>
-                          <Button
-                            size="small"
-                            variant="contained"
-                            disabled={busy || (responseRequired && !customResponse.trim())}
-                            onClick={() => void saveOption(option.id)}
-                          >
-                            {modifying ? "저장 중…" : "저장"}
-                          </Button>
-                        </Stack>
-                      </Stack>
-                    );
-                  }
-
-                  return (
-                    <Stack
-                      key={option.id}
-                      direction={{ xs: "column", sm: "row" }}
-                      spacing={1}
-                      sx={{ p: 1.5, justifyContent: "space-between" }}
-                    >
-                      <Box>
-                        <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                          {option.product_option_group.name}
-                        </Typography>
-                        {option.product_option_group.is_custom_response && (
-                          <Typography variant="caption" color="text.secondary">직접 응답</Typography>
-                        )}
-                      </Box>
-                      <Box sx={{ textAlign: { xs: "left", sm: "right" } }}>
-                        <Typography variant="body2">{value}</Typography>
-                        {additionalPrice > 0 && (
-                          <Typography variant="caption" color="text.secondary">
-                            추가 {formatPrice(additionalPrice)}
-                          </Typography>
-                        )}
-                        {customResponseOption && optionsEditable && (
-                          <Button
-                            size="small"
-                            disabled={busy}
-                            onClick={() => beginOptionEdit(option.id, option.custom_response)}
-                            sx={{ mt: 0.5 }}
-                          >
-                            수정
-                          </Button>
-                        )}
-                      </Box>
-                    </Stack>
-                  );
-                })}
-              </Stack>
-            </Paper>
-          )}
-        </Stack>
-
-        {previewAvailable && (
-          <Stack spacing={1}>
-            <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>출력물</Typography>
-            <Paper variant="outlined" sx={{ p: 2 }}>
-              <Stack
-                direction={{ xs: "column", sm: "row" }}
-                spacing={1.5}
-                sx={{ alignItems: { xs: "stretch", sm: "center" }, justifyContent: "space-between" }}
-              >
-                <Box>
-                  <Typography sx={{ fontWeight: 600 }}>출력물 {printArtifactCount}장</Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    명찰 {product.is_ticket && ticket ? 1 : 0}장 · 유료 옵션 교환권 {exchangeTargetCount}장
-                  </Typography>
-                </Box>
-                <Button
-                  variant="outlined"
-                  disabled={busy}
-                  onClick={() => setPrintPreviewOpen(true)}
-                >
-                  미리보기
-                </Button>
-              </Stack>
-            </Paper>
-          </Stack>
-        )}
-      </Stack>
-
-      <Dialog open={statusDialogOpen} onClose={closeStatusDialog} fullWidth maxWidth="xs">
-        <DialogTitle>{statusActionLabel}</DialogTitle>
-        <DialogContent>
-          <Stack spacing={2} sx={{ pt: 0.5 }}>
-            <Typography variant="body2">
-              {product.product.name}을(를) {statusActionLabel}하시겠습니까?
-            </Typography>
-            {statusError && <Alert severity="error">{statusError}</Alert>}
-          </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button disabled={statusChanging} onClick={closeStatusDialog}>취소</Button>
-          <Button
-            variant="contained"
-            color={nextStatus === "used" ? "primary" : "warning"}
-            disabled={statusChanging}
-            onClick={() => void changeStatus()}
-          >
-            {statusChanging ? "처리 중…" : statusActionLabel}
-          </Button>
-        </DialogActions>
-      </Dialog>
-      {ticket && ticketInfoEditorOpen && (
-        <TicketInfoEditor
-          ticketInfo={ticket}
-          saving={ticketInfoSaving}
-          error={ticketInfoError}
-          onClose={closeTicketInfoEditor}
-          onSave={onModifyTicketInfo}
-        />
-      )}
-      {printPreviewOpen && (
-        <PrintPreviewDialog
-          product={product}
-          onClose={() => setPrintPreviewOpen(false)}
-        />
-      )}
-    </Stack>
   );
 };

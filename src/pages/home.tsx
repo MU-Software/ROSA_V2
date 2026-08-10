@@ -220,7 +220,7 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
             }}
           >
             {registrationState === "idle" || registrationState === "registering" ? (
-              <OrderSearchWorkspace gateway={gateway} onRegistrationChanged={() => refreshStatistics()}>
+              <OrderSearchWorkspace gateway={gateway}>
                 {qrInputMode === "camera" ? (
                   <MobileCameraInput scanner={scanner} />
                 ) : (
