@@ -1,0 +1,513 @@
+import {
+  AutoModeOutlined,
+  CheckCircleOutlined,
+  ErrorOutlined,
+  PrintOutlined,
+  QrCodeScannerOutlined,
+  ScheduleOutlined,
+} from "@mui/icons-material";
+import {
+  Alert,
+  Box,
+  Button,
+  Chip,
+  CircularProgress,
+  Divider,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Paper,
+  Stack,
+  TextField,
+  Typography,
+  type ChipProps,
+} from "@mui/material";
+import { useState, type FC, type FormEvent } from "react";
+import { QueryBoundary } from "../../elements/queryBoundary";
+import { useAppContext } from "../../../contexts";
+import type { OrderProductRelation } from "../../../domain";
+import type { RegistrationDeskGateway } from "../../../gateways";
+import { useOrderProductQuery } from "../../../hooks/useRegistrationDesk";
+import {
+  createRegistrationPrintQueue,
+  getPrintTemplateLabel,
+} from "../../../printing/queue";
+import { OrderProductDetails } from "./orderProductDetails";
+
+export type AutomaticRegistrationStage = "lookup" | "marking_used" | "printing";
+
+export type AutomaticRegistrationProgress = {
+  stage: AutomaticRegistrationStage;
+  processing: boolean;
+  completedPrintJobIds: readonly string[];
+  printingPrintJobId: string | null;
+};
+
+export type AutomaticProductDetailsController = {
+  reprinting: boolean;
+  onProductUpdated: (product: OrderProductRelation) => void;
+  onStatusChanged: (product: OrderProductRelation) => void;
+  onReprint: (product: OrderProductRelation) => Promise<unknown>;
+};
+
+type PrintJobStatus = "waiting" | "printing" | "completed";
+
+const STAGE_LABELS: Record<AutomaticRegistrationStage, string> = {
+  lookup: "주문상품을 확인하고 있습니다.",
+  marking_used: "주문상품을 사용 처리하고 있습니다.",
+  printing: "필요한 출력물을 준비하고 있습니다.",
+};
+
+const PRODUCT_STATUS_LABELS: Record<OrderProductRelation["status"], string> = {
+  pending: "결제 대기",
+  paid: "사용 대기",
+  used: "사용 완료",
+  refunded: "환불",
+};
+
+const PRINT_JOB_STATUS_PRESENTATION: Record<PrintJobStatus, {
+  label: string;
+  color: ChipProps["color"];
+}> = {
+  waiting: { label: "출력 대기", color: "default" },
+  printing: { label: "출력 중", color: "info" },
+  completed: { label: "출력 완료", color: "success" },
+};
+
+const PROCESS_STATUS_PRESENTATION: Record<PrintJobStatus, {
+  label: string;
+  color: ChipProps["color"];
+}> = {
+  waiting: { label: "대기", color: "default" },
+  printing: { label: "진행 중", color: "info" },
+  completed: { label: "완료", color: "success" },
+};
+
+const getPrintJobStatus = (
+  printJobId: string,
+  ready: boolean,
+  reprinting: boolean,
+  completedPrintJobIds: readonly string[],
+  printingPrintJobId: string | null,
+): PrintJobStatus => {
+  if (printingPrintJobId === printJobId) return "printing";
+  if (completedPrintJobIds.includes(printJobId)) return "completed";
+  if (reprinting) return "waiting";
+  if (ready) return "completed";
+  return "waiting";
+};
+
+export const AutomaticRegistrationPanel: FC<{
+  gateway: RegistrationDeskGateway;
+  progress: AutomaticRegistrationProgress;
+  details: AutomaticProductDetailsController;
+  onComplete: () => void;
+}> = ({
+  gateway,
+  progress,
+  details,
+  onComplete,
+}) => {
+  const {
+    order_product_relation: product,
+    registration_state: registrationState,
+  } = useAppContext();
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [reprintRequired, setReprintRequired] = useState(false);
+  const ready = registrationState === "awaiting_completion";
+  const printQueue = product ? createRegistrationPrintQueue(product).snapshot() : [];
+  const productUpdated = (updatedProduct: OrderProductRelation) => {
+    details.onProductUpdated(updatedProduct);
+    setReprintRequired(true);
+  };
+  const reprint = async (updatedProduct: OrderProductRelation) => {
+    await details.onReprint(updatedProduct);
+    setReprintRequired(false);
+  };
+
+  return (
+    <>
+      <Stack spacing={3} sx={{ p: { xs: 2, sm: 3, md: 4 } }}>
+        <Stack spacing={1} sx={{ alignItems: "center", textAlign: "center" }}>
+          {ready ? (
+            <CheckCircleOutlined color="success" sx={{ fontSize: 56 }} />
+          ) : (
+            <CircularProgress size={44} />
+          )}
+          <Typography variant="h5" sx={{ fontWeight: 800 }}>
+            {ready ? "출력을 확인해주세요" : "자동 접수 진행 중"}
+          </Typography>
+          <Typography color="text.secondary">
+            {ready
+              ? "출력물과 참가자를 확인한 뒤 접수를 완료해주세요."
+              : STAGE_LABELS[progress.stage]}
+          </Typography>
+        </Stack>
+
+        {product ? (
+          <Paper variant="outlined" sx={{ p: 2 }}>
+            <Stack
+              direction={{ xs: "column", sm: "row" }}
+              spacing={1.5}
+              sx={{ alignItems: { xs: "stretch", sm: "center" }, justifyContent: "space-between" }}
+            >
+              <Box sx={{ minWidth: 0 }}>
+                <Typography variant="h6" sx={{ fontWeight: 700 }}>
+                  {product.ticket_info?.name ?? product.product.name}
+                </Typography>
+                {product.ticket_info?.organization && (
+                  <Typography color="text.secondary">{product.ticket_info.organization}</Typography>
+                )}
+                <Typography variant="body2" color="text.secondary">{product.product.name}</Typography>
+              </Box>
+              <Button variant="outlined" onClick={() => setDetailsOpen(true)}>
+                주문상품 상세
+              </Button>
+            </Stack>
+          </Paper>
+        ) : (
+          <Alert severity="info">QR 코드에서 주문상품을 조회하고 있습니다.</Alert>
+        )}
+
+        <Stack spacing={1.5}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>처리 현황</Typography>
+          <ProcessingRow
+            label="주문상품 확인"
+            status={product ? "completed" : "printing"}
+          />
+          <ProcessingRow
+            label="사용 처리"
+            status={ready || product?.status === "used"
+              ? "completed"
+              : progress.stage === "marking_used" ? "printing" : "waiting"}
+          />
+        </Stack>
+
+        <Divider />
+
+        <Stack spacing={1.5}>
+          <Stack direction="row" sx={{ alignItems: "center", justifyContent: "space-between" }}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>출력 현황</Typography>
+            {product && <Chip size="small" label={`${printQueue.length}개`} />}
+          </Stack>
+          {!product ? (
+            <Typography color="text.secondary">주문상품 확인 후 출력물이 표시됩니다.</Typography>
+          ) : printQueue.length > 0 ? printQueue.map((entry) => {
+            const status = getPrintJobStatus(
+              entry.id,
+              ready,
+              details.reprinting,
+              progress.completedPrintJobIds,
+              progress.printingPrintJobId,
+            );
+            const presentation = PRINT_JOB_STATUS_PRESENTATION[status];
+            return (
+              <Stack
+                key={entry.id}
+                direction="row"
+                spacing={1.5}
+                sx={{ alignItems: "center", border: 1, borderColor: "divider", borderRadius: 1, p: 1.5 }}
+              >
+                {status === "printing" ? <CircularProgress size={24} /> : <PrintOutlined color="action" />}
+                <Typography sx={{ flex: 1 }}>
+                  {getPrintTemplateLabel(entry.job.template_id)}
+                </Typography>
+                <Chip size="small" color={presentation.color} label={presentation.label} />
+              </Stack>
+            );
+          }) : (
+            <Alert severity="info">이 주문상품에는 필요한 출력물이 없습니다.</Alert>
+          )}
+        </Stack>
+
+        {ready && (
+          reprintRequired ? (
+            <Alert severity="warning">
+              참가자 정보가 변경되었습니다. 최신 정보로 다시 출력해야 접수를 완료할 수 있습니다.
+            </Alert>
+          ) : (
+            <Alert severity="info">
+              현재는 UI 검토를 위한 모의 출력 결과입니다. 실제 프린터 연동은 장치 단계에서 적용됩니다.
+            </Alert>
+          )
+        )}
+
+        <Button
+          variant="contained"
+          size="large"
+          disabled={!ready || progress.processing || details.reprinting || reprintRequired}
+          onClick={onComplete}
+          sx={{ minHeight: 52 }}
+        >
+          접수 완료
+        </Button>
+      </Stack>
+
+      {product && (
+        <OrderProductDetailsDialog
+          open={detailsOpen}
+          gateway={gateway}
+          productId={product.id}
+          editingDisabled={progress.processing}
+          details={{
+            ...details,
+            onProductUpdated: productUpdated,
+            onReprint: reprint,
+          }}
+          onClose={() => setDetailsOpen(false)}
+        />
+      )}
+    </>
+  );
+};
+
+const ProcessingRow: FC<{ label: string; status: PrintJobStatus }> = ({ label, status }) => {
+  const presentation = PROCESS_STATUS_PRESENTATION[status];
+  return (
+    <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
+      {status === "completed" ? (
+        <CheckCircleOutlined color="success" />
+      ) : status === "printing" ? (
+        <CircularProgress size={22} />
+      ) : (
+        <ScheduleOutlined color="disabled" />
+      )}
+      <Typography sx={{ flex: 1 }}>{label}</Typography>
+      <Chip size="small" color={presentation.color} label={presentation.label} />
+    </Stack>
+  );
+};
+
+const OrderProductDetailsDialog: FC<{
+  open: boolean;
+  gateway: RegistrationDeskGateway;
+  productId: string;
+  editingDisabled: boolean;
+  details: AutomaticProductDetailsController;
+  onClose: () => void;
+}> = ({
+  open,
+  gateway,
+  productId,
+  editingDisabled,
+  details,
+  onClose,
+}) => (
+  <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
+    <DialogTitle>주문상품 상세</DialogTitle>
+    <DialogContent dividers sx={{ p: 0 }}>
+      <QueryBoundary resetKeys={[productId]}>
+        <OrderProductDetailsDialogContent
+          gateway={gateway}
+          productId={productId}
+          editingDisabled={editingDisabled}
+          details={details}
+        />
+      </QueryBoundary>
+    </DialogContent>
+    <DialogActions>
+      <Button disabled={details.reprinting} onClick={onClose}>닫기</Button>
+    </DialogActions>
+  </Dialog>
+);
+
+const OrderProductDetailsDialogContent: FC<{
+  gateway: RegistrationDeskGateway;
+  productId: string;
+  editingDisabled: boolean;
+  details: AutomaticProductDetailsController;
+}> = ({
+  gateway,
+  productId,
+  editingDisabled,
+  details,
+}) => {
+  const { data: lookup } = useOrderProductQuery(gateway, productId);
+  const product = lookup.order_product_relation;
+  const [savedChanges, setSavedChanges] = useState(false);
+  const [reprintCompleted, setReprintCompleted] = useState(false);
+  const reprintAvailable = product.status === "used" &&
+    createRegistrationPrintQueue(product).snapshot().length > 0;
+
+  const productUpdated = (updatedProduct: OrderProductRelation) => {
+    details.onProductUpdated(updatedProduct);
+    setSavedChanges(true);
+    setReprintCompleted(false);
+  };
+
+  const reprint = async () => {
+    await details.onReprint(product);
+    setSavedChanges(false);
+    setReprintCompleted(true);
+  };
+
+  return (
+    <OrderProductDetails
+      product={product}
+      gateway={gateway}
+      disabled={editingDisabled || details.reprinting}
+      variant="dialog"
+      statusMode="automatic_revert"
+      onProductUpdated={productUpdated}
+      onStatusChanged={details.onStatusChanged}
+      alerts={(
+        <>
+          {savedChanges && (
+            <Alert severity="warning">수정한 정보로 명찰을 다시 출력해주세요.</Alert>
+          )}
+          {reprintCompleted && (
+            <Alert severity="success">최신 정보로 출력물을 다시 출력했습니다.</Alert>
+          )}
+        </>
+      )}
+      printAction={reprintAvailable ? {
+        label: savedChanges ? "수정 내용으로 다시 출력" : "전체 다시 출력",
+        pendingLabel: "다시 출력 중…",
+        pending: details.reprinting,
+        variant: savedChanges ? "contained" : "outlined",
+        onClick: () => void reprint(),
+      } : undefined}
+    />
+  );
+};
+
+export const AutomaticRegistrationFailure: FC<{
+  gateway: RegistrationDeskGateway;
+  error: Error;
+  product: OrderProductRelation | null;
+  details: AutomaticProductDetailsController;
+  onDismiss: () => void;
+}> = ({
+  gateway,
+  error,
+  product,
+  details,
+  onDismiss,
+}) => {
+  const [detailsOpen, setDetailsOpen] = useState(false);
+
+  return (
+    <>
+      <Stack
+        spacing={2.5}
+        sx={{ minHeight: 420, alignItems: "center", justifyContent: "center", p: 3, textAlign: "center" }}
+      >
+        <ErrorOutlined color="error" sx={{ fontSize: 56 }} />
+        <Box>
+          <Typography variant="h5" sx={{ fontWeight: 800 }}>자동 접수를 진행할 수 없습니다</Typography>
+          <Typography color="error" sx={{ mt: 0.75 }}>{error.message}</Typography>
+        </Box>
+        {product && (
+          <Paper variant="outlined" sx={{ width: "100%", maxWidth: 560, p: 2, textAlign: "left" }}>
+            <Stack
+              direction={{ xs: "column", sm: "row" }}
+              spacing={1.5}
+              sx={{ alignItems: { xs: "stretch", sm: "center" }, justifyContent: "space-between" }}
+            >
+              <Box sx={{ minWidth: 0 }}>
+                <Typography sx={{ fontWeight: 700 }}>
+                  {product.ticket_info?.name ?? product.product.name}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">{product.product.name}</Typography>
+                <Chip size="small" sx={{ mt: 1 }} label={PRODUCT_STATUS_LABELS[product.status]} />
+              </Box>
+              <Button variant="outlined" onClick={() => setDetailsOpen(true)}>
+                주문상품 상세
+              </Button>
+            </Stack>
+          </Paper>
+        )}
+        <Button variant="contained" onClick={onDismiss}>확인 후 다시 스캔</Button>
+      </Stack>
+
+      {product && (
+        <OrderProductDetailsDialog
+          open={detailsOpen}
+          gateway={gateway}
+          productId={product.id}
+          editingDisabled={false}
+          details={details}
+          onClose={() => setDetailsOpen(false)}
+        />
+      )}
+    </>
+  );
+};
+
+export const AutomaticModeBanner: FC<{
+  processing: boolean;
+  onDisable: () => void;
+}> = ({ processing, onDisable }) => (
+  <Alert
+    severity="info"
+    icon={<AutoModeOutlined />}
+    sx={{
+      mb: 2,
+      alignItems: "center",
+      "& .MuiAlert-message": { width: "100%" },
+    }}
+  >
+    <Stack
+      direction={{ xs: "column", sm: "row" }}
+      spacing={1.5}
+      sx={{ alignItems: { xs: "stretch", sm: "center" }, justifyContent: "space-between" }}
+    >
+      <Box>
+        <Typography sx={{ fontWeight: 700 }}>자동 접수 모드 사용 중</Typography>
+        <Typography variant="body2">
+          {processing
+            ? "현재 자동 접수를 처리하고 있습니다. 완료 후 자동 모드를 끌 수 있습니다."
+            : "QR을 인식하면 사용 처리와 출력 단계까지 자동으로 진행합니다."}
+        </Typography>
+      </Box>
+      <Button
+        color="inherit"
+        variant="outlined"
+        disabled={processing}
+        onClick={onDisable}
+        sx={{ flexShrink: 0 }}
+      >
+        자동 모드 끄기
+      </Button>
+    </Stack>
+  </Alert>
+);
+
+export const MockQrInput: FC<{
+  disabled: boolean;
+  onSubmit: (value: string) => void;
+}> = ({ disabled, onSubmit }) => {
+  const [value, setValue] = useState("");
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const normalizedValue = value.trim();
+    if (!normalizedValue || disabled) return;
+    onSubmit(normalizedValue);
+  };
+
+  return (
+    <Box component="form" onSubmit={submit} sx={{ width: "100%", maxWidth: 520, px: 2, pb: 2 }}>
+      <Stack direction="row" spacing={1}>
+        <TextField
+          fullWidth
+          size="small"
+          label="개발용 QR 입력"
+          placeholder="opr:<short_id>:<salt>"
+          value={value}
+          disabled={disabled}
+          onChange={(event) => setValue(event.target.value)}
+        />
+        <Button
+          type="submit"
+          variant="outlined"
+          startIcon={<QrCodeScannerOutlined />}
+          disabled={disabled || !value.trim()}
+        >
+          인식
+        </Button>
+      </Stack>
+    </Box>
+  );
+};
