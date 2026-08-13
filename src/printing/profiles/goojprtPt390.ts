@@ -16,7 +16,7 @@ import {
   parseJxig,
   withCmdMode,
 } from "../pt390";
-import { repeat } from "./common";
+import { repeat, validatePrintCopies } from "./common";
 import type { PrinterProfile } from "./types";
 
 const PT390_MAX_DOTS = 576;
@@ -101,6 +101,7 @@ export const GOOJPRT_PT390: PrinterProfile = {
     };
   },
   buildJob({ image, copies }) {
+    validatePrintCopies(copies);
     if (image.width > PT390_MAX_DOTS) {
       throw new Error(`PT-390 의 인쇄 폭은 ${PT390_MAX_DOTS} dots 입니다: ${image.width} dots`);
     }

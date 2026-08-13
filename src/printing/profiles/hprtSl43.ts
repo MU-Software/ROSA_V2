@@ -1,6 +1,6 @@
 import { concatBytes as concat } from "../../utils/bytes";
 import { ASB_LENGTH, ASB_REQUEST, HEALTH_LENGTH, HEALTH_REQUEST } from "../pt390";
-import { ascii } from "./common";
+import { ascii, validateLabelSpec, validatePrintCopies } from "./common";
 import type { PrinterProfile } from "./types";
 
 const BITMAP_CHUNK_ROWS = 64;
@@ -41,6 +41,8 @@ export const HPRT_SL43: PrinterProfile = {
   ],
   buildJob({ image, copies, label }) {
     if (!label) throw new Error("SL43 은 라벨 크기를 지정해야 합니다");
+    validateLabelSpec(label);
+    validatePrintCopies(copies);
     const preamble = ascii(
       "INITIALPRINTER\r\n" +
         `SIZE ${label.widthMm} mm,${label.heightMm} mm\r\n` +

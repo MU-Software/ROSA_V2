@@ -20,10 +20,22 @@ const STATUS_LABELS = {
   faulted: "연결 끊김",
 } as const;
 
-const LabelSpecFields: FC<{ deviceKey: string; settings: PrinterSettings }> = ({ deviceKey, settings }) => {
-  const label = settings.label ?? { widthMm: 0, heightMm: 0 };
-  const update = (patch: Partial<typeof label>) =>
-    printerManager.updateSettings(deviceKey, { label: { ...label, ...patch } });
+const LabelSpecFields: FC<{
+  deviceKey: string;
+  settings: PrinterSettings;
+  onError: (message: string | null) => void;
+}> = ({ deviceKey, settings, onError }) => {
+  const label = settings.label ?? { widthMm: 50, heightMm: 30, gapMm: 2 };
+  const update = (field: keyof typeof label, value: string) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || (field === "gapMm" ? parsed < 0 : parsed <= 0)) return;
+    try {
+      printerManager.updateSettings(deviceKey, { label: { ...label, [field]: parsed } });
+      onError(null);
+    } catch (reason) {
+      onError(toMessage(reason));
+    }
+  };
 
   return (
     <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
@@ -40,7 +52,8 @@ const LabelSpecFields: FC<{ deviceKey: string; settings: PrinterSettings }> = ({
           label={`${labelText} (mm)`}
           sx={{ width: 110 }}
           value={label[field] ?? ""}
-          onChange={(e) => update({ [field]: Number(e.target.value) })}
+          slotProps={{ htmlInput: { min: field === "gapMm" ? 0 : 0.1, step: 0.1 } }}
+          onChange={(event) => update(field, event.target.value)}
         />
       ))}
     </Stack>
@@ -150,7 +163,9 @@ const PrinterRow: FC<{ device: PrinterDevice }> = ({ device }) => {
               </>
             )}
 
-            {profile && profile.headDots === undefined && <LabelSpecFields deviceKey={device.key} settings={settings} />}
+            {profile && profile.headDots === undefined && (
+              <LabelSpecFields deviceKey={device.key} settings={settings} onError={setError} />
+            )}
 
             <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", gap: 1 }}>
               <Button size="small" variant="contained" disabled={busy !== null} onClick={testPrint}>테스트 인쇄</Button>

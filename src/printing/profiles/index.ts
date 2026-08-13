@@ -5,7 +5,13 @@ import type { DeviceIdentity, DiscoveryFilter, LinkSpec, PrinterProfile } from "
 
 export * from "./types";
 export { brotherGeometry, BROTHER_QL_820NWB, type BrotherLabelGeometry } from "./brother";
-export { maxImageWidth } from "./common";
+export {
+  MAX_PRINT_COPIES,
+  maxImageWidth,
+  validateLabelSpec,
+  validatePrintCopies,
+  validateRightMarginDots,
+} from "./common";
 export { GOOJPRT_PT390 } from "./goojprtPt390";
 export { HPRT_SL43 } from "./hprtSl43";
 

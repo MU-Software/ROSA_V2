@@ -52,10 +52,13 @@ const isSelectablePrinter = (device: PrinterDevice, mobile: boolean): boolean =>
   return !mobile || device.profile.id === GOOJPRT_PT390.id;
 };
 
-const parseMillimeters = (value: string, label: string): number => {
+const parseMillimeters = (value: string, label: string, allowZero = false): number => {
   if (!value.trim()) throw new Error(`${label} 값을 입력하세요.`);
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) throw new Error(`${label} 값이 올바르지 않습니다.`);
+  if (allowZero ? parsed < 0 : parsed <= 0) {
+    throw new Error(`${label} 값은 ${allowZero ? "0 이상" : "0보다 크게"} 입력하세요.`);
+  }
   return parsed;
 };
 
@@ -108,7 +111,7 @@ const PrinterSettingsContent: FC<SettingsContentProps> = ({ device, onClose }) =
             label: {
               widthMm: parseMillimeters(widthMm, "가로"),
               heightMm: parseMillimeters(heightMm, "세로"),
-              gapMm: parseMillimeters(gapMm, "갭"),
+              gapMm: parseMillimeters(gapMm, "갭", true),
             },
           }),
     });
@@ -179,6 +182,7 @@ const PrinterSettingsContent: FC<SettingsContentProps> = ({ device, onClose }) =
           label="가로 (mm)"
           value={shownWidthMm}
           disabled={labelReadOnly}
+          slotProps={{ htmlInput: { min: 0.1, step: 0.1 } }}
           onChange={(event) => setWidthMm(event.target.value)}
         />
         <TextField
@@ -187,6 +191,7 @@ const PrinterSettingsContent: FC<SettingsContentProps> = ({ device, onClose }) =
           label="세로 (mm)"
           value={shownHeightMm}
           disabled={labelReadOnly}
+          slotProps={{ htmlInput: { min: 0.1, step: 0.1 } }}
           onChange={(event) => setHeightMm(event.target.value)}
         />
         <TextField
@@ -195,6 +200,7 @@ const PrinterSettingsContent: FC<SettingsContentProps> = ({ device, onClose }) =
           label="갭 (mm)"
           value={shownGapMm}
           disabled={labelReadOnly}
+          slotProps={{ htmlInput: { min: 0, step: 0.1 } }}
           onChange={(event) => setGapMm(event.target.value)}
         />
       </Stack>

@@ -1,6 +1,6 @@
 import * as RCPT from "@mu-software/receipet/constants";
 import { describeBrotherErrors, parseBrotherStatus } from "../receipet";
-import { repeat } from "./common";
+import { repeat, validatePrintCopies, validateRightMarginDots } from "./common";
 import type { BrotherMedia, PrinterProfile } from "./types";
 
 const BROTHER_HEAD_DOTS = 720;
@@ -98,10 +98,12 @@ export const BROTHER_QL_820NWB: PrinterProfile = {
   },
 
   buildJob({ image, copies, probe, rightMarginDots }) {
+    validatePrintCopies(copies);
     const media = probe?.media;
     if (!media) throw new Error("Brother 는 인쇄 전에 상태 조회로 미디어를 확인해야 합니다");
 
     const rightMargin = rightMarginDots ?? brotherGeometry(media).rightMarginDots;
+    validateRightMarginDots(rightMargin);
     const offset = BROTHER_HEAD_DOTS - image.width - rightMargin;
     if (offset < 0) {
       throw new Error(`이미지가 헤드보다 넓습니다: ${image.width} + 여백 ${rightMargin} > ${BROTHER_HEAD_DOTS} dots`);

@@ -5,6 +5,9 @@ import {
   knownPrinterFilter,
   findProfile,
   maxImageWidth,
+  validateLabelSpec,
+  validatePrintCopies,
+  validateRightMarginDots,
   type CompletionProbe,
   type LabelSpec,
   type PrinterAction,
@@ -111,6 +114,42 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const optionalFiniteNumber = (value: unknown): value is number | undefined =>
   value === undefined || (typeof value === "number" && Number.isFinite(value));
 
+const validStoredLabel = (label: LabelSpec): boolean =>
+  label.widthMm > 0 && label.heightMm > 0 && (label.gapMm === undefined || label.gapMm >= 0);
+
+const validatePrinterSettings = (
+  settings: PrinterSettings,
+  profile: PrinterProfile | undefined,
+  deviceName: string,
+): void => {
+  if (settings.label) {
+    validateLabelSpec(settings.label);
+    const maxWidthMm = profile?.headDots === undefined
+      ? undefined
+      : profile.headDots / profile.dotsPerMm;
+    if (maxWidthMm !== undefined && settings.label.widthMm > maxWidthMm) {
+      throw new Error(
+        `${profile?.name ?? deviceName}의 라벨 가로는 ${maxWidthMm} mm를 넘을 수 없습니다.`,
+      );
+    }
+  }
+  if (settings.paddingMm !== undefined &&
+    (!Number.isFinite(settings.paddingMm) || settings.paddingMm < 0)) {
+    throw new Error(`인쇄 패딩은 0 이상의 유한한 값이어야 합니다: ${settings.paddingMm}`);
+  }
+  if (settings.rightMarginDots !== undefined) {
+    validateRightMarginDots(settings.rightMarginDots);
+    if (profile?.headDots !== undefined && settings.rightMarginDots >= profile.headDots) {
+      throw new Error(`오른쪽 여백은 프린터 헤드 폭보다 작아야 합니다: ${settings.rightMarginDots}`);
+    }
+  }
+  if (settings.label && settings.paddingMm !== undefined &&
+    (settings.paddingMm * 2 >= settings.label.widthMm ||
+      settings.paddingMm * 2 >= settings.label.heightMm)) {
+    throw new Error("인쇄 패딩은 라벨 가로와 세로의 절반보다 작아야 합니다.");
+  }
+};
+
 const parsePrinterSettings = (value: unknown): PrinterSettings | undefined => {
   if (!isRecord(value)) return undefined;
   if (!optionalFiniteNumber(value.rightMarginDots)) return undefined;
@@ -123,7 +162,12 @@ const parsePrinterSettings = (value: unknown): PrinterSettings | undefined => {
     if (!optionalFiniteNumber(widthMm) || !optionalFiniteNumber(heightMm) || !optionalFiniteNumber(gapMm)) return undefined;
     if (widthMm === undefined || heightMm === undefined) return undefined;
     label = { widthMm, heightMm, ...(gapMm === undefined ? {} : { gapMm }) };
+    if (!validStoredLabel(label)) return undefined;
   }
+
+  if (value.paddingMm !== undefined && value.paddingMm < 0) return undefined;
+  if (value.rightMarginDots !== undefined &&
+    (!Number.isInteger(value.rightMarginDots) || value.rightMarginDots < 0)) return undefined;
 
   return {
     ...(label ? { label } : {}),
@@ -229,7 +273,9 @@ export class PrinterManager {
     const device = this.devices.get(key);
     if (!device) throw new Error(`프린터 "${key}" 가 목록에 없습니다`);
     const id = this.deviceStorageId(device);
-    this.settings[id] = { ...this.getSettings(key), ...patch };
+    const settings = { ...this.getSettings(key), ...patch };
+    validatePrinterSettings(settings, device.profile, device.name);
+    this.settings[id] = settings;
     this.persistSettings();
     this.notifyChange();
   }
@@ -637,6 +683,9 @@ export class PrinterManager {
   async print(key: string, image: RcptImage, options: PrintOptions = {}): Promise<void> {
     const connection = this.requireConnection(key);
     const settings = this.getSettings(key);
+    const copies = options.copies ?? 1;
+    validatePrintCopies(copies);
+    validatePrinterSettings(settings, connection.profile, connection.profile.name);
     const physical = this.physicalImageSize(key);
     const padding = this.paddingDots(key);
     const contentWidth = physical.width - padding * 2;
@@ -662,7 +711,7 @@ export class PrinterManager {
     try {
       job = connection.profile.buildJob({
         image: padded,
-        copies: options.copies ?? 1,
+        copies,
         probe: connection.probe,
         label: settings.label,
         rightMarginDots: settings.rightMarginDots,
