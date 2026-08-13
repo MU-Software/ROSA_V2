@@ -1,4 +1,4 @@
-import { ArrowBack, RestartAlt } from "@mui/icons-material";
+import { ArrowBack, Redo, RestartAlt, Undo } from "@mui/icons-material";
 import {
   Alert,
   Box,
@@ -22,10 +22,13 @@ import {
 import { useMemo, useState, type FC } from "react";
 import { Link } from "react-router";
 import { TemplateEditorCanvas } from "../components/printing/templateEditorCanvas";
+import { TemplateElementInspector } from "../components/printing/templateElementInspector";
 import { useTopBar } from "../contexts";
+import { useTemplateDocumentHistory } from "../hooks/useTemplateDocumentHistory";
 import {
   changeTemplateOrientation,
   getOrientedTemplateMedia,
+  updateTemplateElement,
   type PrintTemplateDocument,
   type TemplateLayoutType,
   type TemplateOrientation,
@@ -37,7 +40,7 @@ import {
 } from "../printing/templates";
 
 const elementLabels: Record<string, string> = {
-  brand: "브랜드",
+  "event-logo": "파이콘 로고",
   name: "이름",
   organization: "소속",
   role: "역할",
@@ -49,11 +52,20 @@ const cloneDocument = (document: PrintTemplateDocument): PrintTemplateDocument =
 
 export const TemplatesPage: FC = () => {
   const [sourceTemplateId, setSourceTemplateId] = useState(DEFAULT_BADGE_TEMPLATE.template_id);
-  const [document, setDocument] = useState(() => cloneDocument(DEFAULT_BADGE_TEMPLATE.document));
+  const {
+    document,
+    canUndo,
+    canRedo,
+    commit: commitDocument,
+    replace: replaceDocument,
+    undo,
+    redo,
+  } = useTemplateDocumentHistory(cloneDocument(DEFAULT_BADGE_TEMPLATE.document));
   const [layoutType, setLayoutType] = useState<TemplateLayoutType>("wide");
   const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
   const layout = document.layouts[layoutType];
   const media = getOrientedTemplateMedia(document, layoutType);
+  const sourceTemplate = findBuiltInBadgeTemplate(sourceTemplateId);
   const selectedElement = layout.elements.find(({ id }) => id === selectedElementId) ?? null;
 
   useTopBar(useMemo(() => ({
@@ -71,20 +83,20 @@ export const TemplatesPage: FC = () => {
     const template = findBuiltInBadgeTemplate(templateId);
     if (!template) return;
     setSourceTemplateId(templateId);
-    setDocument(cloneDocument(template.document));
+    replaceDocument(cloneDocument(template.document));
     setSelectedElementId(null);
   };
 
   const resetDocument = () => {
     const template = findBuiltInBadgeTemplate(sourceTemplateId);
     if (!template) return;
-    setDocument(cloneDocument(template.document));
+    commitDocument(cloneDocument(template.document));
     setSelectedElementId(null);
   };
 
   const changeOrientation = (orientation: TemplateOrientation | null) => {
     if (!orientation) return;
-    setDocument((current) => changeTemplateOrientation(current, orientation));
+    commitDocument(changeTemplateOrientation(document, orientation));
     setSelectedElementId(null);
   };
 
@@ -154,6 +166,22 @@ export const TemplatesPage: FC = () => {
               >
                 초기화
               </Button>
+              <Stack direction="row" spacing={0.5}>
+                <Tooltip title="실행 취소">
+                  <span>
+                    <IconButton disabled={!canUndo} onClick={undo} aria-label="실행 취소">
+                      <Undo />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+                <Tooltip title="다시 실행">
+                  <span>
+                    <IconButton disabled={!canRedo} onClick={redo} aria-label="다시 실행">
+                      <Redo />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+              </Stack>
             </Stack>
           </Paper>
 
@@ -169,9 +197,9 @@ export const TemplatesPage: FC = () => {
                 values={{
                   "ticket.name": "홍길동",
                   "ticket.organization": "파이썬 사용자 모임",
-                  "badge.role_label": "참가자",
+                  "badge.role_label": sourceTemplate?.role_label ?? "참가자",
                 }}
-                onDocumentChange={setDocument}
+                onDocumentChange={commitDocument}
                 onSelectedElementChange={setSelectedElementId}
               />
             </Paper>
@@ -193,7 +221,9 @@ export const TemplatesPage: FC = () => {
                   >
                     <ListItemText
                       primary={elementLabels[element.id] ?? element.id}
-                      secondary={element.kind === "text" ? "텍스트" : "QR 코드"}
+                      secondary={element.kind === "text"
+                        ? "텍스트"
+                        : element.kind === "image" ? "이미지" : "QR 코드"}
                     />
                   </ListItemButton>
                 ))}
@@ -201,15 +231,13 @@ export const TemplatesPage: FC = () => {
               {selectedElement && (
                 <>
                   <Divider />
-                  <Stack spacing={1} sx={{ p: 2 }}>
-                    <Typography variant="subtitle2">위치와 크기</Typography>
-                    <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap" }}>
-                      <Chip size="small" label={`X ${selectedElement.frame.x_mm} mm`} />
-                      <Chip size="small" label={`Y ${selectedElement.frame.y_mm} mm`} />
-                      <Chip size="small" label={`W ${selectedElement.frame.width_mm} mm`} />
-                      <Chip size="small" label={`H ${selectedElement.frame.height_mm} mm`} />
-                    </Stack>
-                  </Stack>
+                  <TemplateElementInspector
+                    element={selectedElement}
+                    media={media}
+                    onElementChange={(element) => commitDocument(
+                      updateTemplateElement(document, layoutType, element),
+                    )}
+                  />
                 </>
               )}
             </Paper>

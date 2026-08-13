@@ -28,6 +28,13 @@ const resolveText = (
   ? element.source.value
   : values[element.source.binding] || element.source.fallback;
 
+const resolveImageSource = (
+  element: Extract<PrintTemplateElement, { kind: "image" }>,
+  values: TemplateBindingValues,
+): string => element.source.type === "literal"
+  ? element.source.value
+  : values[element.source.binding] || element.source.fallback;
+
 const TemplateText: FC<{
   element: Extract<PrintTemplateElement, { kind: "text" }>;
   mediaWidthMm: number;
@@ -141,6 +148,20 @@ export const PrintTemplateRenderer: FC<{
                 </Typography>
               </Stack>
             </Box>
+          );
+        }
+
+        if (element.kind === "image") {
+          const source = resolveImageSource(element, values);
+          return (
+            <Box
+              key={element.id}
+              component="img"
+              src={source}
+              alt=""
+              data-template-element-id={element.id}
+              sx={{ ...frameStyle, objectFit: "contain" }}
+            />
           );
         }
 

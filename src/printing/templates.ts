@@ -1,4 +1,5 @@
 import type { OrderProductRelation } from "../domain";
+import pyconLogoUrl from "../assets/pycon_logo.png";
 import {
   printTemplateDocumentSchema,
   type PrintTemplateDocument,
@@ -49,36 +50,30 @@ const createBadgeTemplate = (
         media: { long_edge_mm: 90, short_edge_mm: 38 },
         elements: [
           {
-            id: "brand",
-            kind: "text",
-            frame: { x_mm: 3, y_mm: 3, width_mm: 63, height_mm: 4 },
-            source: { type: "literal", value: "ROSA" },
-            style: {
-              font_size_mm: 2.4,
-              min_font_size_mm: 1.8,
-              font_weight: 800,
-              vertical_align: "top",
-            },
+            id: "event-logo",
+            kind: "image",
+            frame: { x_mm: 3, y_mm: 10, width_mm: 14, height_mm: 14 },
+            source: { type: "binding", binding: "event.logo", fallback: pyconLogoUrl },
           },
           {
             id: "name",
             kind: "text",
-            frame: { x_mm: 3, y_mm: 11, width_mm: 63, height_mm: 9 },
+            frame: { x_mm: 20, y_mm: 3, width_mm: 46, height_mm: 12 },
             source: { type: "binding", binding: "ticket.name" },
-            style: { font_size_mm: 5.5, min_font_size_mm: 2.8, font_weight: 900 },
+            style: { font_size_mm: 9, min_font_size_mm: 3.5, font_weight: 900 },
           },
           {
             id: "organization",
             kind: "text",
-            frame: { x_mm: 3, y_mm: 20, width_mm: 63, height_mm: 6 },
+            frame: { x_mm: 20, y_mm: 16, width_mm: 46, height_mm: 8 },
             source: {
               type: "binding",
               binding: "ticket.organization",
               fallback: "소속 없음",
             },
             style: {
-              font_size_mm: 3,
-              min_font_size_mm: 1.8,
+              font_size_mm: 4.5,
+              min_font_size_mm: 2,
               font_weight: 400,
               vertical_align: "top",
             },
@@ -86,11 +81,11 @@ const createBadgeTemplate = (
           {
             id: "role",
             kind: "text",
-            frame: { x_mm: 3, y_mm: 29, width_mm: 25, height_mm: 6 },
+            frame: { x_mm: 20, y_mm: 28, width_mm: 28, height_mm: 7 },
             source: { type: "binding", binding: "badge.role_label" },
             style: {
-              font_size_mm: 3.1,
-              min_font_size_mm: 2.2,
+              font_size_mm: 4,
+              min_font_size_mm: 2.4,
               font_weight: 800,
               text_align: "center",
               border_radius_mm: 0.8,
@@ -110,36 +105,30 @@ const createBadgeTemplate = (
         media: { long_edge_mm: 40, short_edge_mm: 30 },
         elements: [
           {
-            id: "brand",
-            kind: "text",
-            frame: { x_mm: 2, y_mm: 2, width_mm: 25, height_mm: 3 },
-            source: { type: "literal", value: "ROSA" },
-            style: {
-              font_size_mm: 1.8,
-              min_font_size_mm: 1.4,
-              font_weight: 800,
-              vertical_align: "top",
-            },
+            id: "event-logo",
+            kind: "image",
+            frame: { x_mm: 2, y_mm: 20.5, width_mm: 7.5, height_mm: 7.5 },
+            source: { type: "binding", binding: "event.logo", fallback: pyconLogoUrl },
           },
           {
             id: "name",
             kind: "text",
-            frame: { x_mm: 2, y_mm: 7, width_mm: 25, height_mm: 6 },
+            frame: { x_mm: 2, y_mm: 2, width_mm: 25, height_mm: 8 },
             source: { type: "binding", binding: "ticket.name" },
-            style: { font_size_mm: 4, min_font_size_mm: 2.2, font_weight: 900 },
+            style: { font_size_mm: 6, min_font_size_mm: 2.5, font_weight: 900 },
           },
           {
             id: "organization",
             kind: "text",
-            frame: { x_mm: 2, y_mm: 14, width_mm: 25, height_mm: 5 },
+            frame: { x_mm: 2, y_mm: 11, width_mm: 25, height_mm: 7 },
             source: {
               type: "binding",
               binding: "ticket.organization",
               fallback: "소속 없음",
             },
             style: {
-              font_size_mm: 2.4,
-              min_font_size_mm: 1.6,
+              font_size_mm: 3.5,
+              min_font_size_mm: 1.8,
               font_weight: 400,
               vertical_align: "top",
             },
@@ -147,11 +136,11 @@ const createBadgeTemplate = (
           {
             id: "role",
             kind: "text",
-            frame: { x_mm: 2, y_mm: 22, width_mm: 16, height_mm: 5 },
+            frame: { x_mm: 10, y_mm: 21, width_mm: 17, height_mm: 7 },
             source: { type: "binding", binding: "badge.role_label" },
             style: {
-              font_size_mm: 2.5,
-              min_font_size_mm: 1.8,
+              font_size_mm: 3.5,
+              min_font_size_mm: 2,
               font_weight: 800,
               text_align: "center",
               border_radius_mm: 0.6,

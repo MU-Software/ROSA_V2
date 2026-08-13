@@ -5,6 +5,7 @@ export const TEMPLATE_BINDINGS = [
   "ticket.organization",
   "badge.role_label",
   "order_product.scancode",
+  "event.logo",
 ] as const;
 
 export const TEMPLATE_LAYOUT_TYPES = ["wide", "compact"] as const;
@@ -62,9 +63,24 @@ const templateQrElementSchema = z.object({
   binding: z.literal("order_product.scancode"),
 });
 
+const templateImageElementSchema = z.object({
+  id: z.string().min(1),
+  kind: z.literal("image"),
+  frame: templateFrameSchema,
+  source: z.discriminatedUnion("type", [
+    z.object({ type: z.literal("literal"), value: z.string().min(1) }),
+    z.object({
+      type: z.literal("binding"),
+      binding: z.literal("event.logo"),
+      fallback: z.string().default(""),
+    }),
+  ]),
+});
+
 const templateElementSchema = z.discriminatedUnion("kind", [
   templateTextElementSchema,
   templateQrElementSchema,
+  templateImageElementSchema,
 ]);
 
 const templateLayoutSchema = z.object({
@@ -185,6 +201,23 @@ export const updateTemplateElementFrame = (
       elements: document.layouts[layoutType].elements.map((element) => element.id === elementId
         ? { ...element, frame }
         : element),
+    },
+  },
+});
+
+export const updateTemplateElement = (
+  document: PrintTemplateDocument,
+  layoutType: TemplateLayoutType,
+  element: PrintTemplateElement,
+): PrintTemplateDocument => printTemplateDocumentSchema.parse({
+  ...document,
+  layouts: {
+    ...document.layouts,
+    [layoutType]: {
+      ...document.layouts[layoutType],
+      elements: document.layouts[layoutType].elements.map((current) => current.id === element.id
+        ? element
+        : current),
     },
   },
 });
