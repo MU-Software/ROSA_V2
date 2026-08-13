@@ -14,6 +14,7 @@ import {
   QrCodeScanner,
 } from "@mui/icons-material";
 import {
+  Alert,
   Box,
   Button,
   Chip,
@@ -63,6 +64,7 @@ import {
   useRegistrationConfigurationQuery,
   useRegistrationDeskQueryClient,
 } from "../hooks/useRegistrationDesk";
+import { useManualRegistration } from "../hooks/useManualRegistration";
 import { usePrintQueue } from "../hooks/usePrintQueue";
 import { useQrScanner } from "../hooks/useQrScanner";
 import { useQrTrigger } from "../hooks/useQrTrigger";
@@ -160,6 +162,7 @@ export const HomePage: FC<{
     jobIds,
   );
   const automaticMarkUsedMutation = useModifyOrderProductMutation(gateway);
+  const manualRegistration = useManualRegistration(gateway);
   const automaticRegistrationMutation = useMutation({
     mutationFn: async (rawScancode: string) => {
       if (!gateway) throw new Error("등록 데스크 gateway가 준비되지 않았습니다.");
@@ -234,6 +237,7 @@ export const HomePage: FC<{
   const isDeskOpen = registrationState !== "closed";
   const automaticOperationPending = automaticRegistrationMutation.isPending ||
     printOperationPending;
+  const deskOperationPending = automaticOperationPending || manualRegistration.isPending;
   const hasActiveAutomaticProduct = registrationProduct !== null ||
     automaticFailureProduct !== null;
   useEffect(() => {
@@ -275,7 +279,10 @@ export const HomePage: FC<{
 
   useQrTrigger({
     cameraResult: scanner.result,
-    onDetected: ({ value }) => startAutomaticRegistration(value),
+    onDetected: ({ value }) => {
+      if (isAutomaticRegistrationEnabled) startAutomaticRegistration(value);
+      else manualRegistration.openScannedProduct(value);
+    },
   });
 
   useTopBar(useMemo(() => ({
@@ -316,6 +323,7 @@ export const HomePage: FC<{
     }));
     setAutomaticFailureProduct(null);
     resetPrintJobs();
+    manualRegistration.reset();
     automaticRegistrationMutation.reset();
     void navigate("/", { replace: true });
   };
@@ -408,6 +416,7 @@ export const HomePage: FC<{
   };
 
   const setAutomaticRegistrationMode = (enabled: boolean) => {
+    manualRegistration.reset();
     setAppContext((current) => ({
       ...current,
       automatic_registration_enabled: enabled,
@@ -497,7 +506,7 @@ export const HomePage: FC<{
         onClose={() => setMenuAnchor(null)}
       >
         <MenuItem
-          disabled={registrationState !== "closed" && automaticOperationPending}
+          disabled={registrationState !== "closed" && deskOperationPending}
           onClick={toggleDesk}
         >
           <ListItemIcon><PowerSettingsNew fontSize="small" /></ListItemIcon>
@@ -505,7 +514,7 @@ export const HomePage: FC<{
         </MenuItem>
         {gateway && isDeskOpen && (
           <MenuItem
-            disabled={automaticOperationPending}
+            disabled={deskOperationPending}
             onClick={() => setAutomaticRegistrationMode(!isAutomaticRegistrationEnabled)}
           >
             <ListItemIcon><AutoModeOutlined fontSize="small" /></ListItemIcon>
@@ -514,7 +523,7 @@ export const HomePage: FC<{
               size="small"
               edge="end"
               checked={isAutomaticRegistrationEnabled}
-              disabled={automaticOperationPending}
+              disabled={deskOperationPending}
               slotProps={{ input: { "aria-label": "자동 접수" } }}
               onClick={(event) => event.stopPropagation()}
               onChange={(_, checked) => setAutomaticRegistrationMode(checked)}
@@ -599,15 +608,29 @@ export const HomePage: FC<{
         ) : registrationState === "idle" || registrationState === "registering" ? (
           <OrderSearchWorkspace gateway={gateway}>
             <Stack sx={{ height: "100%", alignItems: "center" }}>
+              {manualRegistration.isPending && (
+                <Alert severity="info" sx={{ width: "100%" }}>QR 주문상품을 조회하고 있습니다.</Alert>
+              )}
+              {manualRegistration.error && (
+                <Alert
+                  severity="error"
+                  onClose={manualRegistration.reset}
+                  sx={{ width: "100%" }}
+                >
+                  {manualRegistration.error.message}
+                </Alert>
+              )}
               {qrInputMode === "camera" ? (
                 <MobileCameraInput scanner={scanner} />
               ) : (
                 <RegistrationStateContent presentation={presentation} isDeskOpen={isDeskOpen} />
               )}
-              {import.meta.env.DEV && isAutomaticRegistrationEnabled && registrationState === "idle" && (
+              {import.meta.env.DEV && registrationState === "idle" && (
                 <MockQrInput
-                  disabled={automaticRegistrationMutation.isPending}
-                  onSubmit={startAutomaticRegistration}
+                  disabled={deskOperationPending}
+                  onSubmit={isAutomaticRegistrationEnabled
+                    ? startAutomaticRegistration
+                    : manualRegistration.openScannedProduct}
                 />
               )}
             </Stack>
