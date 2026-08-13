@@ -1,7 +1,12 @@
 import type { OrderProductRelation } from "../domain";
 import { getPaidOptionExchangeTargets } from "../domain";
+import {
+  DEFAULT_BADGE_TEMPLATE,
+  findBuiltInBadgeTemplate,
+  selectBadgeTemplate,
+} from "./templates";
 
-export const DEFAULT_BADGE_TEMPLATE_ID = "registration.badge.default";
+export const DEFAULT_BADGE_TEMPLATE_ID = DEFAULT_BADGE_TEMPLATE.template_id;
 export const DEFAULT_EXCHANGE_VOUCHER_TEMPLATE_ID = "registration.exchange-voucher.default";
 
 export type PrintJob<TData = unknown> = {
@@ -62,7 +67,7 @@ export const createRegistrationPrintQueue = (
   const data = { order_product_relation: product };
 
   if (product.is_ticket && product.ticket_info) {
-    queue.enqueue({ template_id: DEFAULT_BADGE_TEMPLATE_ID, data });
+    queue.enqueue({ template_id: selectBadgeTemplate(product).template_id, data });
   }
   if (getPaidOptionExchangeTargets(product).length > 0) {
     queue.enqueue({ template_id: DEFAULT_EXCHANGE_VOUCHER_TEMPLATE_ID, data });
@@ -72,7 +77,8 @@ export const createRegistrationPrintQueue = (
 };
 
 export const getPrintTemplateLabel = (templateId: string): string => {
-  if (templateId === DEFAULT_BADGE_TEMPLATE_ID) return "명찰";
+  const badgeTemplate = findBuiltInBadgeTemplate(templateId);
+  if (badgeTemplate) return `${badgeTemplate.role_label} 명찰`;
   if (templateId === DEFAULT_EXCHANGE_VOUCHER_TEMPLATE_ID) return "유료 옵션 교환권";
   return templateId;
 };

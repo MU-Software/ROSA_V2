@@ -73,10 +73,12 @@ import { useQrScanner } from "../hooks/useQrScanner";
 import { useQrTrigger } from "../hooks/useQrTrigger";
 import {
   createRegistrationPrintQueue,
+  DEFAULT_BADGE_TEMPLATE_ID,
   getPrintTemplateLabel,
   type PrintJobExecution,
   type RegistrationPrintData,
 } from "../printing/queue";
+import { isBuiltInBadgeTemplateId } from "../printing/templates";
 import { getQrInputMode } from "../utils/platform";
 
 const DEFAULT_FAREWELL_DURATION_MS = 3000;
@@ -149,7 +151,11 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
     const entries = createRegistrationPrintQueue(product).snapshot();
     return runPrintJobs(entries, async (entry) => {
       await new Promise<void>((resolve) => window.setTimeout(resolve, 400));
-      if (mockPrintFailureRef.current === entry.job.template_id) {
+      const failureTemplateId = mockPrintFailureRef.current;
+      const shouldFail = failureTemplateId === entry.job.template_id ||
+        (failureTemplateId === DEFAULT_BADGE_TEMPLATE_ID &&
+          isBuiltInBadgeTemplateId(entry.job.template_id));
+      if (shouldFail) {
         mockPrintFailureRef.current = null;
         setMockPrintFailureTemplateId(null);
         throw new Error(`${getPrintTemplateLabel(entry.job.template_id)} 모의 출력에 실패했습니다.`);

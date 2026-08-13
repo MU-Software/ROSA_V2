@@ -19,6 +19,7 @@ import {
   type OrderProductOptionRelation,
   type OrderProductRelation,
 } from "../../../domain";
+import { selectBadgeTemplate } from "../../../printing/templates";
 
 const QrPlaceholder: FC = () => (
   <Box
@@ -43,12 +44,18 @@ const QrPlaceholder: FC = () => (
 const BadgePreview: FC<{ product: OrderProductRelation }> = ({ product }) => {
   const ticket = product.ticket_info;
   if (!ticket) return null;
+  const template = selectBadgeTemplate(product);
+  const roleMarker = template.variant === "solid"
+    ? { bgcolor: "common.black", color: "common.white", border: 1, borderColor: "common.black" }
+    : template.variant === "outlined"
+    ? { border: 2, borderColor: "common.black" }
+    : { border: 1, borderColor: "grey.400" };
 
   return (
     <Stack spacing={1}>
       <Stack direction="row" spacing={1} sx={{ alignItems: "center", justifyContent: "space-between" }}>
         <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>명찰</Typography>
-        <Chip size="small" label="참가자 기본 템플릿" />
+        <Chip size="small" label={template.name} />
       </Stack>
       <Paper
         variant="outlined"
@@ -95,8 +102,18 @@ const BadgePreview: FC<{ product: OrderProductRelation }> = ({ product }) => {
               {ticket.organization || "소속 없음"}
             </Typography>
           </Box>
-          <Typography sx={{ fontWeight: 700, fontSize: "clamp(0.7rem, 2vw, 1rem)" }}>
-            참가자
+          <Typography
+            sx={{
+              alignSelf: "flex-start",
+              px: 1.25,
+              py: 0.25,
+              borderRadius: 0.75,
+              fontWeight: 800,
+              fontSize: "clamp(0.7rem, 2vw, 1rem)",
+              ...roleMarker,
+            }}
+          >
+            {template.role_label}
           </Typography>
         </Stack>
         <QrPlaceholder />
@@ -108,46 +125,78 @@ const BadgePreview: FC<{ product: OrderProductRelation }> = ({ product }) => {
 const ExchangeVoucherPreview: FC<{
   product: OrderProductRelation;
   targets: OrderProductOptionRelation[];
-}> = ({ product, targets }) => (
-  <Paper
-    variant="outlined"
-    sx={{
-      width: "100%",
-      maxWidth: 560,
-      aspectRatio: "3 / 2",
-      mx: "auto",
-      p: { xs: 2, sm: 3 },
-      display: "grid",
-      gridTemplateColumns: "minmax(0, 1fr) auto",
-      gap: 2,
-      bgcolor: "common.white",
-      color: "common.black",
-      overflow: "hidden",
-    }}
-  >
-    <Stack sx={{ minWidth: 0, justifyContent: "space-between" }}>
-      <Box>
-        <Typography variant="overline" sx={{ fontWeight: 700 }}>유료 옵션 교환권</Typography>
-        <Stack spacing={0.75} sx={{ mt: 0.5 }}>
+}> = ({ product, targets }) => {
+  const longestText = Math.max(...targets.flatMap((target) => [
+    target.product_option_group.name.length,
+    target.product_option?.name.length ?? 0,
+  ]));
+  const density = Math.max(targets.length, longestText / 18);
+  const titleFontSize = Math.max(1.1, Math.min(2.5, 2.7 - (density - 1) * 0.32));
+  const valueFontSize = Math.max(0.95, titleFontSize * 0.72);
+  const columns = targets.length >= 4 && longestText <= 24 ? 2 : 1;
+
+  return (
+    <Paper
+      variant="outlined"
+      sx={{
+        width: "100%",
+        maxWidth: 560,
+        aspectRatio: "3 / 2",
+        mx: "auto",
+        p: { xs: 2, sm: 3 },
+        display: "flex",
+        bgcolor: "common.white",
+        color: "common.black",
+        overflow: "hidden",
+      }}
+    >
+      <Stack sx={{ width: "100%", minWidth: 0, justifyContent: "space-between" }}>
+        <Typography variant="overline" sx={{ fontWeight: 800, lineHeight: 1 }}>
+          유료 옵션 교환권
+        </Typography>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+            alignContent: "center",
+            gap: { xs: 1, sm: 1.5 },
+            flex: 1,
+            py: 1,
+          }}
+        >
           {targets.map((target) => (
-            <Box key={target.id}>
-              <Typography sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+            <Box key={target.id} sx={{ minWidth: 0 }}>
+              <Typography
+                sx={{
+                  fontWeight: 900,
+                  fontSize: `clamp(1rem, 6vw, ${titleFontSize}rem)`,
+                  lineHeight: 1.08,
+                  overflowWrap: "anywhere",
+                }}
+              >
                 {target.product_option_group.name}
               </Typography>
-              <Typography variant="body2">{target.product_option?.name}</Typography>
+              <Typography
+                sx={{
+                  mt: 0.25,
+                  fontWeight: 700,
+                  fontSize: `clamp(0.9rem, 4vw, ${valueFontSize}rem)`,
+                  lineHeight: 1.1,
+                  overflowWrap: "anywhere",
+                }}
+              >
+                {target.product_option?.name}
+              </Typography>
             </Box>
           ))}
-        </Stack>
-      </Box>
-      <Box>
-        <Typography variant="caption" color="text.secondary">
+        </Box>
+        <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1 }}>
           {product.id}
         </Typography>
-      </Box>
-    </Stack>
-    <QrPlaceholder />
-  </Paper>
-);
+      </Stack>
+    </Paper>
+  );
+};
 
 export const PrintPreviewDialog: FC<{
   product: OrderProductRelation;
@@ -162,7 +211,7 @@ export const PrintPreviewDialog: FC<{
       <DialogContent>
         <Stack spacing={3} sx={{ pt: 0.5 }}>
           <Alert severity="info">
-            역할 태그와 signed QR은 서버 연동 단계에서 적용됩니다. 현재는 참가자 기본 템플릿을 표시합니다.
+            역할 태그에 따라 기본 명찰 템플릿을 선택합니다. 명찰 QR 데이터 연결은 서버 연동 단계에서 적용됩니다.
           </Alert>
           {!hasBadge && exchangeTargets.length === 0 && (
             <Alert severity="warning">미리볼 출력물이 없습니다.</Alert>
