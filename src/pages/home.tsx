@@ -4,6 +4,7 @@ import {
   BugReportOutlined,
   CheckCircleOutlined,
   DesktopWindowsOutlined,
+  DesignServicesOutlined,
   LockOutlined,
   MenuOutlined,
   PauseCircleOutlined,
@@ -471,6 +472,10 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
         <MenuItem component={Link} to="/debug" onClick={() => setMenuAnchor(null)}>
           <ListItemIcon><BugReportOutlined fontSize="small" /></ListItemIcon>
           <ListItemText>장치 진단</ListItemText>
+        </MenuItem>
+        <MenuItem component={Link} to="/templates" onClick={() => setMenuAnchor(null)}>
+          <ListItemIcon><DesignServicesOutlined fontSize="small" /></ListItemIcon>
+          <ListItemText>명찰 템플릿</ListItemText>
         </MenuItem>
       </Menu>
 

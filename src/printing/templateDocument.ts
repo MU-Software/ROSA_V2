@@ -170,3 +170,58 @@ export const selectTemplateLayoutType = (
     ? "wide"
     : "compact";
 };
+
+export const updateTemplateElementFrame = (
+  document: PrintTemplateDocument,
+  layoutType: TemplateLayoutType,
+  elementId: string,
+  frame: PrintTemplateElement["frame"],
+): PrintTemplateDocument => printTemplateDocumentSchema.parse({
+  ...document,
+  layouts: {
+    ...document.layouts,
+    [layoutType]: {
+      ...document.layouts[layoutType],
+      elements: document.layouts[layoutType].elements.map((element) => element.id === elementId
+        ? { ...element, frame }
+        : element),
+    },
+  },
+});
+
+export const changeTemplateOrientation = (
+  document: PrintTemplateDocument,
+  orientation: TemplateOrientation,
+): PrintTemplateDocument => {
+  if (document.orientation === orientation) return document;
+  const scaleMillimeters = (value: number, ratio: number): number =>
+    Math.round(value * ratio * 100) / 100;
+
+  const layouts = Object.fromEntries(TEMPLATE_LAYOUT_TYPES.map((layoutType) => {
+    const currentMedia = getOrientedTemplateMedia(document, layoutType);
+    const nextMedia = getOrientedTemplateMedia({ ...document, orientation }, layoutType);
+    const layout = document.layouts[layoutType];
+
+    return [layoutType, {
+      ...layout,
+      elements: layout.elements.map((element) => ({
+        ...element,
+        frame: {
+          ...element.frame,
+          x_mm: scaleMillimeters(element.frame.x_mm, nextMedia.width_mm / currentMedia.width_mm),
+          y_mm: scaleMillimeters(element.frame.y_mm, nextMedia.height_mm / currentMedia.height_mm),
+          width_mm: scaleMillimeters(
+            element.frame.width_mm,
+            nextMedia.width_mm / currentMedia.width_mm,
+          ),
+          height_mm: scaleMillimeters(
+            element.frame.height_mm,
+            nextMedia.height_mm / currentMedia.height_mm,
+          ),
+        },
+      })),
+    }];
+  }));
+
+  return printTemplateDocumentSchema.parse({ ...document, orientation, layouts });
+};

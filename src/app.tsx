@@ -1,10 +1,12 @@
-import { Alert, Stack } from "@mui/material";
+import { Alert, CircularProgress, Stack } from "@mui/material";
 import {
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
+  lazy,
+  Suspense,
   type Dispatch,
   type FC,
   type SetStateAction,
@@ -21,6 +23,10 @@ import { HomePage } from "./pages/home";
 import { NotFoundPage } from "./pages/notFound";
 import type { RegistrationDeskGateway } from "./gateways";
 import { useLocalStorageAppState } from "./hooks/useLocalStorageAppState";
+
+const TemplatesPage = lazy(async () => ({
+  default: (await import("./pages/templates")).TemplatesPage,
+}));
 
 export const App: FC<{ registrationDeskGateway: RegistrationDeskGateway | null }> = ({
   registrationDeskGateway,
@@ -106,6 +112,14 @@ export const App: FC<{ registrationDeskGateway: RegistrationDeskGateway | null }
       <Routes>
         <Route path="/" element={<HomePage gateway={registrationDeskGateway} />} />
         <Route path="/display" element={<ExternalDisplayPage />} />
+        <Route
+          path="/templates"
+          element={(
+            <Suspense fallback={<Stack sx={{ p: 4, alignItems: "center" }}><CircularProgress /></Stack>}>
+              <TemplatesPage />
+            </Suspense>
+          )}
+        />
         <Route path="/debug" element={<DebugPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
