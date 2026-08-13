@@ -1,0 +1,8 @@
+[Unit]
+Description=ROSA registration desk
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/rosa
+Restart=always
+RestartSec=2

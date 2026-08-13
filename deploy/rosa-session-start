@@ -1,0 +1,7 @@
+#!/bin/sh
+# labwc 세션이 만든 Wayland 환경을 systemd user 인스턴스에 넘긴 뒤 앱을 띄운다.
+# 이 과정이 없으면 서비스가 디스플레이를 찾지 못한다.
+set -eu
+
+systemctl --user import-environment WAYLAND_DISPLAY XDG_RUNTIME_DIR XDG_CURRENT_DESKTOP
+exec systemctl --user restart rosa.service
