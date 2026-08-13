@@ -1,4 +1,5 @@
 import type { OrderProductRelation } from "../domain";
+import { z } from "zod";
 import pyconLogoUrl from "../assets/pycon_logo_monochrome.svg";
 import {
   printTemplateDocumentSchema,
@@ -198,17 +199,102 @@ export const BUILT_IN_BADGE_TEMPLATES: readonly BuiltInBadgeTemplate[] = [
 
 export const DEFAULT_BADGE_TEMPLATE = BUILT_IN_BADGE_TEMPLATES[2];
 
+const ACTIVE_BADGE_TEMPLATE_CONFIGURATION_KEY = "rosa.active-badge-template-configuration";
+const badgeTemplateSettingsSchema = z.object({
+  schema_version: z.literal(1),
+  default_template_id: z.string(),
+  documents: z.record(z.string(), printTemplateDocumentSchema),
+  tag_template_ids: z.record(z.string(), z.string()),
+});
+
+export type BadgeTemplateSettings = z.infer<typeof badgeTemplateSettingsSchema>;
+
+const defaultTagTemplateIds = (): Record<string, string> => Object.fromEntries(
+  BUILT_IN_BADGE_TEMPLATES.map(({ tag_code, template_id }) => [tag_code, template_id]),
+);
+
+export const createDefaultBadgeTemplateSettings = (): BadgeTemplateSettings => ({
+  schema_version: 1,
+  default_template_id: DEFAULT_BADGE_TEMPLATE.template_id,
+  documents: {},
+  tag_template_ids: defaultTagTemplateIds(),
+});
+
+const badgeTemplateSettingsKey = (configurationId: string): string =>
+  `rosa.badge-template-settings:${configurationId}`;
+
+export const setActiveBadgeTemplateConfiguration = (configurationId: string | null): void => {
+  if (typeof localStorage === "undefined") return;
+  if (configurationId) {
+    localStorage.setItem(ACTIVE_BADGE_TEMPLATE_CONFIGURATION_KEY, configurationId);
+  } else {
+    localStorage.removeItem(ACTIVE_BADGE_TEMPLATE_CONFIGURATION_KEY);
+  }
+};
+
+export const loadBadgeTemplateSettings = (
+  configurationId?: string,
+): BadgeTemplateSettings => {
+  if (typeof localStorage === "undefined") return createDefaultBadgeTemplateSettings();
+  const activeConfigurationId = configurationId ??
+    localStorage.getItem(ACTIVE_BADGE_TEMPLATE_CONFIGURATION_KEY);
+  if (!activeConfigurationId) return createDefaultBadgeTemplateSettings();
+
+  try {
+    const stored = localStorage.getItem(badgeTemplateSettingsKey(activeConfigurationId));
+    if (!stored) return createDefaultBadgeTemplateSettings();
+    return badgeTemplateSettingsSchema.parse(JSON.parse(stored) as unknown);
+  } catch {
+    return createDefaultBadgeTemplateSettings();
+  }
+};
+
+export const saveBadgeTemplateSettings = (
+  configurationId: string,
+  settings: BadgeTemplateSettings,
+): BadgeTemplateSettings => {
+  const parsed = badgeTemplateSettingsSchema.parse(settings);
+  if (typeof localStorage !== "undefined") {
+    localStorage.setItem(badgeTemplateSettingsKey(configurationId), JSON.stringify(parsed));
+  }
+  return parsed;
+};
+
+export const findBadgeTemplate = (
+  templateId: string,
+  settings = loadBadgeTemplateSettings(),
+): BuiltInBadgeTemplate | undefined => {
+  const template = findBuiltInBadgeTemplate(templateId);
+  if (!template) return undefined;
+  const document = settings.documents[templateId];
+  return document ? { ...template, document } : template;
+};
+
 export const selectBadgeTemplate = (
   product: Pick<OrderProductRelation, "tags">,
 ): BuiltInBadgeTemplate => {
-  const tagCodes = new Set(product.tags.map(({ code }) => code));
-  return BUILT_IN_BADGE_TEMPLATES.reduce<BuiltInBadgeTemplate>(
-    (selected, candidate) => tagCodes.has(candidate.tag_code) &&
-      candidate.priority > selected.priority
-      ? candidate
-      : selected,
-    DEFAULT_BADGE_TEMPLATE,
-  );
+  const settings = loadBadgeTemplateSettings();
+  const defaultTemplate = findBadgeTemplate(settings.default_template_id, settings) ??
+    DEFAULT_BADGE_TEMPLATE;
+  const selected = product.tags.reduce<{
+    template: BuiltInBadgeTemplate;
+    priority: number;
+    tag_code: string | null;
+  }>((current, tag) => {
+    const templateId = settings.tag_template_ids[tag.code];
+    const candidate = templateId ? findBadgeTemplate(templateId, settings) : undefined;
+    const precedesCurrent = tag.priority < current.priority ||
+      tag.priority === current.priority &&
+      (current.tag_code === null || tag.code.localeCompare(current.tag_code) < 0);
+    return candidate && precedesCurrent
+      ? { template: candidate, priority: tag.priority, tag_code: tag.code }
+      : current;
+  }, {
+    template: defaultTemplate,
+    priority: Number.POSITIVE_INFINITY,
+    tag_code: null,
+  });
+  return selected.template;
 };
 
 export const findBuiltInBadgeTemplate = (

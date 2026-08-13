@@ -49,6 +49,7 @@ export const orderProductRelationTagSchema = z.object({
   id: z.string(),
   code: z.string(),
   name: z.string(),
+  priority: z.number().int(),
 });
 
 export const orderProductRelationSchema = z.object({

@@ -11,7 +11,7 @@ import {
 } from "./queue";
 import { rasterizeTemplate } from "./templateRaster";
 import { selectTemplateLayoutType, type TemplateBindingValues } from "./templateDocument";
-import { findBuiltInBadgeTemplate } from "./templates";
+import { findBadgeTemplate } from "./templates";
 
 const RENDER_WIDTH = 900;
 
@@ -36,7 +36,7 @@ const createRegistrationPrintJobDocument = ({
   height: number;
 }) => {
   const product = entry.job.data.order_product_relation;
-  const badgeTemplate = findBuiltInBadgeTemplate(entry.job.template_id);
+  const badgeTemplate = findBadgeTemplate(entry.job.template_id);
   if (badgeTemplate) {
     const ticket = product.ticket_info;
     if (!ticket) throw new Error("명찰에 사용할 참가자 정보가 없습니다");

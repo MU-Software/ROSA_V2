@@ -80,6 +80,7 @@ import {
   type PrintJobExecution,
   type RegistrationPrintData,
 } from "../printing/queue";
+import { setActiveBadgeTemplateConfiguration } from "../printing/templates";
 import { getQrInputMode } from "../utils/platform";
 
 const DEFAULT_FAREWELL_DURATION_MS = 3000;
@@ -615,12 +616,13 @@ const RegistrationConfigurationQuery: FC<{
   const { event_logo_url: eventLogoUrl, setAppContext } = useAppContext();
 
   useEffect(() => {
+    setActiveBadgeTemplateConfiguration(data.id);
     if (eventLogoUrl === data.event.logo_url) return;
     setAppContext((current) => ({
       ...current,
       event_logo_url: data.event.logo_url,
     }));
-  }, [data.event.logo_url, eventLogoUrl, setAppContext]);
+  }, [data.event.logo_url, data.id, eventLogoUrl, setAppContext]);
 
   return null;
 };

@@ -16,6 +16,7 @@ import type { PersistedAppState } from "./apis/appState";
 import { installDeviceCleanup } from "./apis/deviceLifecycle";
 import { serialManager } from "./apis/serial";
 import { TopBar } from "./components/elements/topbar";
+import { QueryBoundary } from "./components/elements/queryBoundary";
 import { AppContext, loadAppConfig, saveAppConfig, type AppContextData } from "./contexts";
 import { DebugPage } from "./pages/debug";
 import { ExternalDisplayPage } from "./pages/display";
@@ -127,7 +128,13 @@ export const App: FC<{
           path="/templates"
           element={(
             <Suspense fallback={<Stack sx={{ p: 4, alignItems: "center" }}><CircularProgress /></Stack>}>
-              <TemplatesPage />
+              {registrationDeskGateway ? (
+                <QueryBoundary>
+                  <TemplatesPage gateway={registrationDeskGateway} />
+                </QueryBoundary>
+              ) : (
+                <Alert severity="error">등록 데스크 서버 연결이 필요합니다.</Alert>
+              )}
             </Suspense>
           )}
         />

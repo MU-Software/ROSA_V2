@@ -18,6 +18,7 @@ import {
 } from "./hooks/useRosaConnection";
 import { LoginPage } from "./pages/login";
 import { ServerSetupPage } from "./pages/serverSetup";
+import { setActiveBadgeTemplateConfiguration } from "./printing/templates";
 
 type BootstrapState =
   | { status: "setup"; initial_server_origin?: string }
@@ -71,6 +72,7 @@ export const AppBootstrap: FC = () => {
   const changeServer = useCallback(() => {
     queryClient.clear();
     savePersistedAppState(DEFAULT_PERSISTED_APP_STATE);
+    setActiveBadgeTemplateConfiguration(null);
     clearServerConfig();
     setState({
       status: "setup",

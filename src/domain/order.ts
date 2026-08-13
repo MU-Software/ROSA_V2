@@ -78,6 +78,7 @@ export type OrderProductRelationTag = {
   id: EntityId;
   code: string;
   name: string;
+  priority: number;
 };
 
 export type OrderProductRelation = {
