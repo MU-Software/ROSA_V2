@@ -25,7 +25,7 @@ sudo udevadm control --reload-rules
 sudo udevadm trigger --subsystem-match=usb
 
 say "자동 실행"
-mkdir -p "$HOME/.config/systemd/user" "$HOME/.config/autostart"
+mkdir -p "$HOME/.config/systemd/user" "$HOME/.config/autostart" "$HOME/.local/state"
 install -m 644 "$HERE/rosa.service" "$HOME/.config/systemd/user/rosa.service"
 sudo install -m 755 "$HERE/rosa-session-start" /usr/local/bin/rosa-session-start
 cat > "$HOME/.config/autostart/rosa.desktop" <<'EOF'

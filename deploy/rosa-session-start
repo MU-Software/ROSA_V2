@@ -1,7 +1,22 @@
 #!/bin/sh
 # labwc 세션이 만든 Wayland 환경을 systemd user 인스턴스에 넘긴 뒤 앱을 띄운다.
 # 이 과정이 없으면 서비스가 디스플레이를 찾지 못한다.
+#
+# 세션이 올라오는 중에 끼어들면 GTK 와 입력기(ibus) 초기화가 겹쳐 기기가 몇 분간
+# 갈려나간다. 실측에서 부하가 13 을 넘고 sshd 가 연결을 거부하는 데까지 갔다.
+# 데스크는 몇 초 늦게 떠도 상관없으므로, 세션이 자리 잡을 때까지 기다린다.
 set -eu
+
+WAIT_FOR_SESSION=${ROSA_START_DELAY:-20}
+
+socket="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/${WAYLAND_DISPLAY:-wayland-0}"
+elapsed=0
+while [ ! -S "$socket" ] && [ "$elapsed" -lt 30 ]; do
+  sleep 1
+  elapsed=$((elapsed + 1))
+done
+
+sleep "$WAIT_FOR_SESSION"
 
 systemctl --user import-environment WAYLAND_DISPLAY XDG_RUNTIME_DIR XDG_CURRENT_DESKTOP
 exec systemctl --user restart rosa.service

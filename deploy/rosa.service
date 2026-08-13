@@ -1,8 +1,14 @@
 [Unit]
 Description=ROSA registration desk
 After=graphical-session.target
+# 느리게 반복되는 재시작 고리도 잡는다. systemd 기본값(10 초 안에 5 회)은 앱이 몇십 초
+# 살다 죽는 경우를 걸러내지 못해, 기기가 조용히 갈려나간다.
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 ExecStart=/usr/bin/rosa
 Restart=always
-RestartSec=2
+RestartSec=5
+StandardOutput=append:%h/.local/state/rosa.log
+StandardError=append:%h/.local/state/rosa.log
