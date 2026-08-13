@@ -30,7 +30,13 @@ targets:
     sources:
       - path: Sources
       - path: Assets.xcassets
+      # buildPhase 를 주지 않으면 xcodegen 이 여기 있는 libapp.a 를 Resources 로
+      # 추론해 앱 번들 안에 그대로 복사한다. App Store 업로드가 409 로 거부된다
+      # ("Invalid bundle structure ... binary file is not permitted").
+      # 링크는 아래 dependencies 의 framework 항목과 LIBRARY_SEARCH_PATHS 가 하므로
+      # 여기서는 Xcode 내비게이터에 보이기만 하면 된다.
       - path: Externals
+        buildPhase: none
       - path: rosa_iOS
       - path: assets
         buildPhase: resources
