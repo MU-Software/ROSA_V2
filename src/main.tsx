@@ -10,6 +10,12 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router";
 import { AppBootstrap } from "./bootstrap";
 import { AppErrorBoundary } from "./components/elements/appErrorBoundary";
+import { EXTERNAL_DISPLAY_PATH, isExternalDisplayWindow } from "./apis/externalDisplay";
+
+// 라우터가 보기 전에 맞춰야 한다.
+if (isExternalDisplayWindow() && window.location.pathname !== EXTERNAL_DISPLAY_PATH) {
+  window.history.replaceState(null, "", EXTERNAL_DISPLAY_PATH);
+}
 
 const theme = createTheme({});
 const queryClient = new QueryClient({

@@ -37,6 +37,7 @@ import {
 import { useMutation } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState, type FC, type MouseEvent } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router";
+import { openExternalDisplay } from "../apis/externalDisplay";
 import { QueryBoundary } from "../components/elements/queryBoundary";
 import { RegistrationDeskLayout } from "../components/layouts/registrationDeskLayout";
 import {
@@ -532,11 +533,10 @@ export const HomePage: FC<{
         )}
         <Divider />
         <MenuItem
-          component="a"
-          href="/display"
-          target="_blank"
-          rel="noreferrer"
-          onClick={() => setMenuAnchor(null)}
+          onClick={() => {
+            setMenuAnchor(null);
+            void openExternalDisplay();
+          }}
         >
           <ListItemIcon><DesktopWindowsOutlined fontSize="small" /></ListItemIcon>
           <ListItemText>외부 화면 열기</ListItemText>

@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "external-display",
+  "description": "외부 화면 창은 로컬 상태만 읽어 표시한다. 서버도 장치도 건드리지 않는다",
+  "windows": [
+    "external-display"
+  ],
+  "permissions": [
+    "core:default"
+  ]
+}
