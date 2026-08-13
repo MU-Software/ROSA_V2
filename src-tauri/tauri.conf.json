@@ -35,6 +35,10 @@
     ],
     "linux": {
       "deb": {
+        "depends": [
+          "libusb-1.0-0",
+          "libudev1"
+        ],
         "files": {
           "/usr/lib/udev/rules.d/99-rosa-printers.rules": "packaging/linux/99-rosa-printers.rules"
         }
