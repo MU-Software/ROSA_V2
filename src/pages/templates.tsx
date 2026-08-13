@@ -1,4 +1,4 @@
-import { ArrowBack, Redo, RestartAlt, SaveOutlined, Undo } from "@mui/icons-material";
+import { Redo, RestartAlt, SaveOutlined, Undo } from "@mui/icons-material";
 import {
   Alert,
   Box,
@@ -25,11 +25,9 @@ import {
   Typography,
   type SelectChangeEvent,
 } from "@mui/material";
-import { useEffect, useMemo, useState, type FC } from "react";
-import { Link } from "react-router";
+import { useEffect, useState, type FC } from "react";
 import { TemplateEditorCanvas } from "../components/printing/templateEditorCanvas";
 import { TemplateElementInspector } from "../components/printing/templateElementInspector";
-import { useTopBar } from "../contexts";
 import type { RegistrationDeskGateway } from "../gateways";
 import { useRegistrationConfigurationQuery } from "../hooks/useRegistrationDesk";
 import { useTemplateDocumentHistory } from "../hooks/useTemplateDocumentHistory";
@@ -94,17 +92,6 @@ export const TemplatesPage: FC<{ gateway: RegistrationDeskGateway }> = ({ gatewa
   useEffect(() => {
     setActiveBadgeTemplateConfiguration(configuration.id);
   }, [configuration.id]);
-  useTopBar(useMemo(() => ({
-    title: "명찰 템플릿",
-    rightActionButtons: (
-      <Tooltip title="ROSA로 돌아가기">
-        <IconButton color="inherit" component={Link} to="/" aria-label="ROSA로 돌아가기">
-          <ArrowBack />
-        </IconButton>
-      </Tooltip>
-    ),
-  }), []));
-
   const changeSourceTemplate = (templateId: string) => {
     const template = findBuiltInBadgeTemplate(templateId);
     if (!template) return;
@@ -165,7 +152,7 @@ export const TemplatesPage: FC<{ gateway: RegistrationDeskGateway }> = ({ gatewa
   };
 
   return (
-    <Box sx={{ minHeight: "calc(100dvh - 64px)", bgcolor: "grey.50" }}>
+    <Box sx={{ minHeight: "100%", bgcolor: "grey.50" }}>
       <Container maxWidth="xl" sx={{ py: { xs: 2, md: 3 } }}>
         <Stack spacing={2}>
           <Alert severity="info">

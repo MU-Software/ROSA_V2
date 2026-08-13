@@ -17,7 +17,6 @@ import {
   Box,
   Button,
   Chip,
-  Container,
   Divider,
   Dialog,
   DialogActions,
@@ -28,19 +27,17 @@ import {
   ListItemText,
   Menu,
   MenuItem,
-  Paper,
   Stack,
   Switch,
   Tooltip,
   Typography,
-  useMediaQuery,
   type ChipProps,
-  type Theme,
 } from "@mui/material";
 import { useMutation } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState, type FC, type MouseEvent } from "react";
 import { Link } from "react-router";
 import { QueryBoundary } from "../components/elements/queryBoundary";
+import { RegistrationDeskLayout } from "../components/layouts/registrationDeskLayout";
 import {
   AutomaticModeBanner,
   AutomaticRegistrationFailure,
@@ -52,11 +49,8 @@ import {
 } from "../components/pages/home/automaticRegistration";
 import { MobileCameraInput } from "../components/pages/home/mobileCamera";
 import { OrderSearchWorkspace } from "../components/pages/home/orderSearch";
-import {
-  DeviceStatusPanel,
-  RegistrationStatisticsPanel,
-} from "../components/pages/home/sidebar";
 import { useAppContext, useTopBar } from "../contexts";
+import { useAppLayout } from "../contexts/appLayout";
 import {
   getAutomaticRegistrationUnavailableReason,
   parseOrderProductScancode,
@@ -69,7 +63,6 @@ import {
   useModifyOrderProductMutation,
   useRegistrationConfigurationQuery,
   useRegistrationDeskQueryClient,
-  useRegistrationStatisticsQuery,
 } from "../hooks/useRegistrationDesk";
 import { usePrintQueue } from "../hooks/usePrintQueue";
 import { useQrScanner } from "../hooks/useQrScanner";
@@ -127,6 +120,7 @@ export const HomePage: FC<{
   onChangeServer: () => void;
   onLogout?: () => void;
 }> = ({ gateway, onChangeServer, onLogout }) => {
+  useAppLayout({ topBarVisible: true, sidebarVisible: true });
   const {
     active_order_product_scancode: activeOrderProductScancode,
     automatic_registration_enabled: isAutomaticRegistrationEnabled,
@@ -241,8 +235,6 @@ export const HomePage: FC<{
     printOperationPending;
   const hasActiveAutomaticProduct = registrationProduct !== null ||
     automaticFailureProduct !== null;
-  const isNarrow = useMediaQuery((theme: Theme) => theme.breakpoints.down("sm"));
-
   useEffect(() => {
     if (qrInputMode !== "camera") return;
     if (isDeskOpen && scannerStatus === "idle") {
@@ -431,7 +423,7 @@ export const HomePage: FC<{
   };
 
   return (
-    <Box sx={{ minHeight: "calc(100dvh - 64px)", bgcolor: "grey.50" }}>
+    <>
       <Menu
         anchorEl={menuAnchor}
         open={menuAnchor !== null}
@@ -518,94 +510,60 @@ export const HomePage: FC<{
         </DialogActions>
       </Dialog>
 
-      <Container maxWidth="xl" sx={{ py: { xs: 2, md: 3 } }}>
-        {gateway && (
-          <QueryBoundary pendingFallback={null}>
-            <RegistrationConfigurationQuery gateway={gateway} />
-          </QueryBoundary>
-        )}
-        {isAutomaticRegistrationEnabled && (
+      {gateway && (
+        <QueryBoundary pendingFallback={null}>
+          <RegistrationConfigurationQuery gateway={gateway} />
+        </QueryBoundary>
+      )}
+      <RegistrationDeskLayout
+        gateway={gateway}
+        camera={qrInputMode === "camera"
+          ? { status: scanner.status, error: scanner.error }
+          : undefined}
+        banner={isAutomaticRegistrationEnabled ? (
           <AutomaticModeBanner
             processing={automaticOperationPending}
             onDisable={() => setAutomaticRegistrationMode(false)}
           />
+        ) : undefined}
+      >
+        {gateway && (automaticRegistrationMutation.isPending ||
+        (registrationState === "awaiting_completion" && registrationProduct)) ? (
+          <AutomaticRegistrationPanel
+            gateway={gateway}
+            progress={automaticProgress}
+            details={automaticProductDetails}
+            onComplete={completeAutomaticRegistration}
+          />
+        ) : gateway && automaticRegistrationMutation.error ? (
+          <AutomaticRegistrationFailure
+            gateway={gateway}
+            error={automaticRegistrationMutation.error}
+            product={automaticFailureProduct}
+            details={automaticProductDetails}
+            onDismiss={dismissAutomaticRegistrationError}
+          />
+        ) : registrationState === "idle" || registrationState === "registering" ? (
+          <OrderSearchWorkspace gateway={gateway}>
+            <Stack sx={{ height: "100%", alignItems: "center" }}>
+              {qrInputMode === "camera" ? (
+                <MobileCameraInput scanner={scanner} />
+              ) : (
+                <RegistrationStateContent presentation={presentation} isDeskOpen={isDeskOpen} />
+              )}
+              {import.meta.env.DEV && isAutomaticRegistrationEnabled && registrationState === "idle" && (
+                <MockQrInput
+                  disabled={automaticRegistrationMutation.isPending}
+                  onSubmit={startAutomaticRegistration}
+                />
+              )}
+            </Stack>
+          </OrderSearchWorkspace>
+        ) : (
+          <RegistrationStateContent presentation={presentation} isDeskOpen={isDeskOpen} />
         )}
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: { xs: "1fr", lg: "minmax(0, 1fr) 300px", xl: "minmax(0, 1fr) 320px" },
-            gap: 3,
-          }}
-        >
-          <Paper
-            variant="outlined"
-            sx={{
-              minHeight: { xs: 400, md: 620 },
-              display: "flex",
-              flexDirection: "column",
-              overflow: "hidden",
-            }}
-          >
-            {gateway && (automaticRegistrationMutation.isPending ||
-            (registrationState === "awaiting_completion" && registrationProduct)) ? (
-              <AutomaticRegistrationPanel
-                gateway={gateway}
-                progress={automaticProgress}
-                details={automaticProductDetails}
-                onComplete={completeAutomaticRegistration}
-              />
-            ) : gateway && automaticRegistrationMutation.error ? (
-              <AutomaticRegistrationFailure
-                gateway={gateway}
-                error={automaticRegistrationMutation.error}
-                product={automaticFailureProduct}
-                details={automaticProductDetails}
-                onDismiss={dismissAutomaticRegistrationError}
-              />
-            ) : registrationState === "idle" || registrationState === "registering" ? (
-              <OrderSearchWorkspace gateway={gateway}>
-                <Stack sx={{ height: "100%", alignItems: "center" }}>
-                  {qrInputMode === "camera" ? (
-                    <MobileCameraInput scanner={scanner} />
-                  ) : (
-                    <RegistrationStateContent presentation={presentation} isDeskOpen={isDeskOpen} />
-                  )}
-                  {import.meta.env.DEV && isAutomaticRegistrationEnabled && registrationState === "idle" && (
-                    <MockQrInput
-                      disabled={automaticRegistrationMutation.isPending}
-                      onSubmit={startAutomaticRegistration}
-                    />
-                  )}
-                </Stack>
-              </OrderSearchWorkspace>
-            ) : (
-              <RegistrationStateContent presentation={presentation} isDeskOpen={isDeskOpen} />
-            )}
-          </Paper>
-
-          <Stack spacing={3}>
-            {gateway ? (
-              <QueryBoundary>
-                <RegistrationStatisticsQuery gateway={gateway} defaultExpanded={!isNarrow} />
-              </QueryBoundary>
-            ) : (
-              <RegistrationStatisticsPanel
-                defaultExpanded={!isNarrow}
-                statistics={null}
-                error="등록 통계 gateway가 준비되지 않았습니다."
-                requestedAt={null}
-                refreshing={false}
-                onRefresh={() => undefined}
-              />
-            )}
-            <DeviceStatusPanel
-              defaultExpanded={!isNarrow}
-              camera={qrInputMode === "camera" ? { status: scanner.status, error: scanner.error } : undefined}
-            />
-          </Stack>
-        </Box>
-      </Container>
-    </Box>
+      </RegistrationDeskLayout>
+    </>
   );
 };
 
@@ -625,24 +583,6 @@ const RegistrationConfigurationQuery: FC<{
   }, [data.event.logo_url, data.id, eventLogoUrl, setAppContext]);
 
   return null;
-};
-
-const RegistrationStatisticsQuery: FC<{
-  gateway: RegistrationDeskGateway;
-  defaultExpanded: boolean;
-}> = ({ gateway, defaultExpanded }) => {
-  const { data, dataUpdatedAt, isFetching, refetch } = useRegistrationStatisticsQuery(gateway);
-
-  return (
-    <RegistrationStatisticsPanel
-      defaultExpanded={defaultExpanded}
-      statistics={data}
-      error={null}
-      requestedAt={dataUpdatedAt}
-      refreshing={isFetching}
-      onRefresh={() => void refetch()}
-    />
-  );
 };
 
 const RegistrationStateContent: FC<{

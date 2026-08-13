@@ -17,6 +17,8 @@ import { installDeviceCleanup } from "./apis/deviceLifecycle";
 import { serialManager } from "./apis/serial";
 import { TopBar } from "./components/elements/topbar";
 import { QueryBoundary } from "./components/elements/queryBoundary";
+import { FullScreenRouteDialog } from "./components/layouts/fullScreenRouteDialog";
+import { AppLayoutProvider } from "./components/providers/appLayoutProvider";
 import { AppContext, loadAppConfig, saveAppConfig, type AppContextData } from "./contexts";
 import { DebugPage } from "./pages/debug";
 import { ExternalDisplayPage } from "./pages/display";
@@ -87,10 +89,11 @@ export const App: FC<{
 
   return (
     <AppContext.Provider value={contextValue}>
-      {!isExternalDisplay && <TopBar />}
-      {!isExternalDisplay && (
-        appState.serialRestoreError || appState.serialRestoreFailures.length > 0
-      ) && (
+      <AppLayoutProvider>
+        {!isExternalDisplay && <TopBar />}
+        {!isExternalDisplay && (
+          appState.serialRestoreError || appState.serialRestoreFailures.length > 0
+        ) && (
           <Alert
             severity="warning"
             onClose={() => setAppContext((prev) => ({
@@ -112,35 +115,45 @@ export const App: FC<{
             </Stack>
           </Alert>
         )}
-      <Routes>
-        <Route
-          path="/"
-          element={(
-            <HomePage
-              gateway={registrationDeskGateway}
-              onChangeServer={onChangeServer}
-              onLogout={onLogout}
-            />
-          )}
-        />
-        <Route path="/display" element={<ExternalDisplayPage />} />
-        <Route
-          path="/templates"
-          element={(
-            <Suspense fallback={<Stack sx={{ p: 4, alignItems: "center" }}><CircularProgress /></Stack>}>
-              {registrationDeskGateway ? (
-                <QueryBoundary>
-                  <TemplatesPage gateway={registrationDeskGateway} />
-                </QueryBoundary>
-              ) : (
-                <Alert severity="error">등록 데스크 서버 연결이 필요합니다.</Alert>
-              )}
-            </Suspense>
-          )}
-        />
-        <Route path="/debug" element={<DebugPage />} />
-        <Route path="*" element={<NotFoundPage />} />
-      </Routes>
+        <Routes>
+          <Route
+            path="/"
+            element={(
+              <HomePage
+                gateway={registrationDeskGateway}
+                onChangeServer={onChangeServer}
+                onLogout={onLogout}
+              />
+            )}
+          />
+          <Route path="/display" element={<ExternalDisplayPage />} />
+          <Route
+            path="/templates"
+            element={(
+              <FullScreenRouteDialog title="명찰 템플릿">
+                <Suspense fallback={<Stack sx={{ p: 4, alignItems: "center" }}><CircularProgress /></Stack>}>
+                  {registrationDeskGateway ? (
+                    <QueryBoundary>
+                      <TemplatesPage gateway={registrationDeskGateway} />
+                    </QueryBoundary>
+                  ) : (
+                    <Alert severity="error">등록 데스크 서버 연결이 필요합니다.</Alert>
+                  )}
+                </Suspense>
+              </FullScreenRouteDialog>
+            )}
+          />
+          <Route
+            path="/debug"
+            element={(
+              <FullScreenRouteDialog title="장치 진단">
+                <DebugPage />
+              </FullScreenRouteDialog>
+            )}
+          />
+          <Route path="*" element={<NotFoundPage />} />
+        </Routes>
+      </AppLayoutProvider>
     </AppContext.Provider>
   );
 };

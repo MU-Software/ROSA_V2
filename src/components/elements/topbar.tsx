@@ -1,10 +1,12 @@
 import { AppBar, Box, Toolbar, Typography } from "@mui/material";
 import type { FC } from "react";
 import { useAppContext } from "../../contexts";
+import { useAppLayoutState } from "../../contexts/appLayout";
 
 export const TopBar: FC = () => {
   const { topBarInfo } = useAppContext();
-  if (!topBarInfo) return null;
+  const { topBarVisible } = useAppLayoutState();
+  if (!topBarVisible || !topBarInfo) return null;
 
   return (
     <AppBar position="sticky">
