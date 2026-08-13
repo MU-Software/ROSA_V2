@@ -19,6 +19,10 @@ import { TopBar } from "./components/elements/topbar";
 import { QueryBoundary } from "./components/elements/queryBoundary";
 import { FullScreenRouteDialog } from "./components/layouts/fullScreenRouteDialog";
 import { AppLayoutProvider } from "./components/providers/appLayoutProvider";
+import {
+  AutomaticRegistrationDetailsRoute,
+  AutomaticRegistrationRoute,
+} from "./components/pages/home/automaticRegistration";
 import { AppContext, loadAppConfig, saveAppConfig, type AppContextData } from "./contexts";
 import { DebugPage } from "./pages/debug";
 import { ExternalDisplayPage } from "./pages/display";
@@ -136,6 +140,15 @@ export const App: FC<{
             <Route path="orders" element={<OrderSearchResultsRoute />} />
             <Route path="orders/:orderId" element={<OrderDetailsRoute />} />
             <Route path="order-products/:productId" element={<OrderProductDetailsRoute />} />
+            <Route path="automatic" element={<AutomaticRegistrationRoute />} />
+            <Route
+              path="automatic/order-products/:productId"
+              element={<AutomaticRegistrationRoute />}
+            />
+            <Route
+              path="automatic/order-products/:productId/details"
+              element={<AutomaticRegistrationDetailsRoute />}
+            />
             <Route path="*" element={<OrderWorkspaceNotFoundRoute />} />
           </Route>
           <Route path="/display" element={<ExternalDisplayPage />} />

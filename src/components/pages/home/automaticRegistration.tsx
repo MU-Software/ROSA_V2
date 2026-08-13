@@ -13,10 +13,6 @@ import {
   Chip,
   CircularProgress,
   Divider,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
   Paper,
   Stack,
   TextField,
@@ -24,6 +20,7 @@ import {
   type ChipProps,
 } from "@mui/material";
 import { useState, type FC, type FormEvent } from "react";
+import { useNavigate, useOutletContext, useParams } from "react-router";
 import { QueryBoundary } from "../../elements/queryBoundary";
 import { useAppContext } from "../../../contexts";
 import type { OrderProductRelation } from "../../../domain";
@@ -55,6 +52,16 @@ export type AutomaticProductDetailsController = {
     printJobId: string,
   ) => Promise<readonly PrintJobExecution[]>;
   onMarkPrintJobCompleted: (product: OrderProductRelation, printJobId: string) => void;
+};
+
+export type AutomaticRegistrationRouteContext = {
+  gateway: RegistrationDeskGateway;
+  progress: AutomaticRegistrationProgress;
+  details: AutomaticProductDetailsController;
+  error: Error | null;
+  failureProduct: OrderProductRelation | null;
+  onComplete: () => void;
+  onDismissError: () => void;
 };
 
 type ProcessStatus = Exclude<PrintJobExecutionStatus, "failed">;
@@ -95,21 +102,20 @@ const allPrintJobsCompleted = (executions: readonly PrintJobExecution[]): boolea
   executions.every(({ status }) => status === "completed");
 
 export const AutomaticRegistrationPanel: FC<{
-  gateway: RegistrationDeskGateway;
   progress: AutomaticRegistrationProgress;
   details: AutomaticProductDetailsController;
   onComplete: () => void;
+  onOpenDetails: (productId: string) => void;
 }> = ({
-  gateway,
   progress,
   details,
   onComplete,
+  onOpenDetails,
 }) => {
   const {
     order_product_relation: product,
     registration_state: registrationState,
   } = useAppContext();
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const ready = registrationState === "awaiting_completion";
   const printQueue = product ? createRegistrationPrintQueue(product).snapshot() : [];
   const executionById = new Map(progress.print_jobs.map((execution) => [execution.id, execution]));
@@ -117,17 +123,13 @@ export const AutomaticRegistrationPanel: FC<{
     ({ id }) => executionById.get(id)?.status === "completed",
   );
   const hasPrintFailures = progress.print_jobs.some(({ status }) => status === "failed");
-  const productUpdated = (updatedProduct: OrderProductRelation) => {
-    details.onProductUpdated(updatedProduct);
-  };
   const retryPrintJob = async (printJobId: string) => {
     if (!product) return;
     await details.onRetryPrintJob(product, printJobId);
   };
 
   return (
-    <>
-      <Stack spacing={3} sx={{ p: { xs: 2, sm: 3, md: 4 } }}>
+    <Stack spacing={3} sx={{ p: { xs: 2, sm: 3, md: 4 } }}>
         <Stack spacing={1} sx={{ alignItems: "center", textAlign: "center" }}>
           {hasPrintFailures ? (
             <ErrorOutlined color="error" sx={{ fontSize: 56 }} />
@@ -172,7 +174,7 @@ export const AutomaticRegistrationPanel: FC<{
                 )}
                 <Typography variant="body2" color="text.secondary">{product.product.name}</Typography>
               </Box>
-              <Button variant="outlined" onClick={() => setDetailsOpen(true)}>
+              <Button variant="outlined" onClick={() => onOpenDetails(product.id)}>
                 주문상품 상세
               </Button>
             </Stack>
@@ -299,22 +301,7 @@ export const AutomaticRegistrationPanel: FC<{
         >
           접수 완료
         </Button>
-      </Stack>
-
-      {product && (
-        <OrderProductDetailsDialog
-          open={detailsOpen}
-          gateway={gateway}
-          productId={product.id}
-          editingDisabled={progress.processing}
-          details={{
-            ...details,
-            onProductUpdated: productUpdated,
-          }}
-          onClose={() => setDetailsOpen(false)}
-        />
-      )}
-    </>
+    </Stack>
   );
 };
 
@@ -335,49 +322,42 @@ const ProcessingRow: FC<{ label: string; status: ProcessStatus }> = ({ label, st
   );
 };
 
-const OrderProductDetailsDialog: FC<{
-  open: boolean;
+const AutomaticOrderProductDetails: FC<{
   gateway: RegistrationDeskGateway;
   productId: string;
   editingDisabled: boolean;
   details: AutomaticProductDetailsController;
-  onClose: () => void;
+  onBack: () => void;
 }> = ({
-  open,
   gateway,
   productId,
   editingDisabled,
   details,
-  onClose,
+  onBack,
 }) => (
-  <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
-    <DialogTitle>주문상품 상세</DialogTitle>
-    <DialogContent dividers sx={{ p: 0 }}>
-      <QueryBoundary resetKeys={[productId]}>
-        <OrderProductDetailsDialogContent
-          gateway={gateway}
-          productId={productId}
-          editingDisabled={editingDisabled}
-          details={details}
-        />
-      </QueryBoundary>
-    </DialogContent>
-    <DialogActions>
-      <Button disabled={details.reprinting} onClick={onClose}>닫기</Button>
-    </DialogActions>
-  </Dialog>
+  <QueryBoundary resetKeys={[productId]}>
+    <AutomaticOrderProductDetailsContent
+      gateway={gateway}
+      productId={productId}
+      editingDisabled={editingDisabled}
+      details={details}
+      onBack={onBack}
+    />
+  </QueryBoundary>
 );
 
-const OrderProductDetailsDialogContent: FC<{
+const AutomaticOrderProductDetailsContent: FC<{
   gateway: RegistrationDeskGateway;
   productId: string;
   editingDisabled: boolean;
   details: AutomaticProductDetailsController;
+  onBack: () => void;
 }> = ({
   gateway,
   productId,
   editingDisabled,
   details,
+  onBack,
 }) => {
   const { data: lookup } = useOrderProductQuery(gateway, productId);
   const product = lookup;
@@ -405,8 +385,12 @@ const OrderProductDetailsDialogContent: FC<{
       product={product}
       gateway={gateway}
       disabled={editingDisabled || details.reprinting}
-      variant="dialog"
       statusMode="automatic_revert"
+      navigation={{
+        orderName: "자동 접수",
+        backLabel: "자동 접수 진행",
+        onBack,
+      }}
       onProductUpdated={productUpdated}
       onStatusChanged={details.onStatusChanged}
       alerts={(
@@ -431,26 +415,21 @@ const OrderProductDetailsDialogContent: FC<{
 };
 
 export const AutomaticRegistrationFailure: FC<{
-  gateway: RegistrationDeskGateway;
   error: Error;
   product: OrderProductRelation | null;
-  details: AutomaticProductDetailsController;
   onDismiss: () => void;
+  onOpenDetails: (productId: string) => void;
 }> = ({
-  gateway,
   error,
   product,
-  details,
   onDismiss,
+  onOpenDetails,
 }) => {
-  const [detailsOpen, setDetailsOpen] = useState(false);
-
   return (
-    <>
-      <Stack
-        spacing={2.5}
-        sx={{ minHeight: 420, alignItems: "center", justifyContent: "center", p: 3, textAlign: "center" }}
-      >
+    <Stack
+      spacing={2.5}
+      sx={{ minHeight: 420, alignItems: "center", justifyContent: "center", p: 3, textAlign: "center" }}
+    >
         <ErrorOutlined color="error" sx={{ fontSize: 56 }} />
         <Box>
           <Typography variant="h5" sx={{ fontWeight: 800 }}>자동 접수를 진행할 수 없습니다</Typography>
@@ -470,26 +449,66 @@ export const AutomaticRegistrationFailure: FC<{
                 <Typography variant="body2" color="text.secondary">{product.product.name}</Typography>
                 <Chip size="small" sx={{ mt: 1 }} label={PRODUCT_STATUS_LABELS[product.status]} />
               </Box>
-              <Button variant="outlined" onClick={() => setDetailsOpen(true)}>
+              <Button variant="outlined" onClick={() => onOpenDetails(product.id)}>
                 주문상품 상세
               </Button>
             </Stack>
           </Paper>
         )}
         <Button variant="contained" onClick={onDismiss}>확인 후 다시 스캔</Button>
-      </Stack>
+    </Stack>
+  );
+};
 
-      {product && (
-        <OrderProductDetailsDialog
-          open={detailsOpen}
-          gateway={gateway}
-          productId={product.id}
-          editingDisabled={false}
-          details={details}
-          onClose={() => setDetailsOpen(false)}
-        />
-      )}
-    </>
+const useAutomaticRegistrationRoute = (): AutomaticRegistrationRouteContext =>
+  useOutletContext<AutomaticRegistrationRouteContext>();
+
+const automaticProductRoute = (productId: string): string =>
+  `/automatic/order-products/${productId}`;
+
+export const AutomaticRegistrationRoute: FC = () => {
+  const context = useAutomaticRegistrationRoute();
+  const navigate = useNavigate();
+  const openDetails = (productId: string) => {
+    void navigate(`${automaticProductRoute(productId)}/details`);
+  };
+
+  if (context.error) {
+    return (
+      <AutomaticRegistrationFailure
+        error={context.error}
+        product={context.failureProduct}
+        onDismiss={context.onDismissError}
+        onOpenDetails={openDetails}
+      />
+    );
+  }
+
+  return (
+    <AutomaticRegistrationPanel
+      progress={context.progress}
+      details={context.details}
+      onComplete={context.onComplete}
+      onOpenDetails={openDetails}
+    />
+  );
+};
+
+export const AutomaticRegistrationDetailsRoute: FC = () => {
+  const context = useAutomaticRegistrationRoute();
+  const navigate = useNavigate();
+  const { productId } = useParams();
+
+  if (!productId) return <AutomaticRegistrationRoute />;
+
+  return (
+    <AutomaticOrderProductDetails
+      gateway={context.gateway}
+      productId={productId}
+      editingDisabled={context.progress.processing}
+      details={context.details}
+      onBack={() => void navigate(automaticProductRoute(productId), { replace: true })}
+    />
   );
 };
 

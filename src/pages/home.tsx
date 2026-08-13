@@ -35,16 +35,15 @@ import {
 } from "@mui/material";
 import { useMutation } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState, type FC, type MouseEvent } from "react";
-import { Link } from "react-router";
+import { Link, Outlet, useLocation, useNavigate } from "react-router";
 import { QueryBoundary } from "../components/elements/queryBoundary";
 import { RegistrationDeskLayout } from "../components/layouts/registrationDeskLayout";
 import {
   AutomaticModeBanner,
-  AutomaticRegistrationFailure,
-  AutomaticRegistrationPanel,
   MockQrInput,
   type AutomaticProductDetailsController,
   type AutomaticRegistrationProgress,
+  type AutomaticRegistrationRouteContext,
   type AutomaticRegistrationStage,
 } from "../components/pages/home/automaticRegistration";
 import { MobileCameraInput } from "../components/pages/home/mobileCamera";
@@ -121,6 +120,8 @@ export const HomePage: FC<{
   onLogout?: () => void;
 }> = ({ gateway, onChangeServer, onLogout }) => {
   useAppLayout({ topBarVisible: true, sidebarVisible: true });
+  const location = useLocation();
+  const navigate = useNavigate();
   const {
     active_order_product_scancode: activeOrderProductScancode,
     automatic_registration_enabled: isAutomaticRegistrationEnabled,
@@ -259,6 +260,7 @@ export const HomePage: FC<{
     setAutomaticFailureProduct(null);
     resetPrintJobs();
     automaticRegistrationMutation.reset();
+    void navigate("/automatic", { replace: true });
     automaticRegistrationMutation.mutate(value);
   }, [
     automaticRegistrationMutation,
@@ -268,6 +270,7 @@ export const HomePage: FC<{
     registrationState,
     resetPrintJobs,
     setAppContext,
+    navigate,
   ]);
 
   useQrTrigger({
@@ -314,6 +317,7 @@ export const HomePage: FC<{
     setAutomaticFailureProduct(null);
     resetPrintJobs();
     automaticRegistrationMutation.reset();
+    void navigate("/", { replace: true });
   };
 
   const toggleDesk = () => {
@@ -349,6 +353,7 @@ export const HomePage: FC<{
     automaticRegistrationMutation.reset();
     setAutomaticRegistrationStage("lookup");
     resetPrintJobs();
+    void navigate("/", { replace: true });
   };
 
   const dismissAutomaticRegistrationError = () => {
@@ -356,6 +361,7 @@ export const HomePage: FC<{
     setAutomaticFailureProduct(null);
     resetPrintJobs();
     automaticRegistrationMutation.reset();
+    void navigate("/", { replace: true });
   };
 
   const reprintAutomaticProduct = (
@@ -393,10 +399,12 @@ export const HomePage: FC<{
         : current.registration_state,
       order_product_relation: updatedProduct,
       farewell_until: null,
+      active_order_product_scancode: null,
     }));
     setAutomaticFailureProduct(null);
     resetPrintJobs();
     automaticRegistrationMutation.reset();
+    void navigate(`/order-products/${updatedProduct.id}`, { replace: true });
   };
 
   const setAutomaticRegistrationMode = (enabled: boolean) => {
@@ -421,6 +429,65 @@ export const HomePage: FC<{
     onRetryPrintJob: retryAutomaticPrintJob,
     onMarkPrintJobCompleted: markAutomaticPrintJobCompleted,
   };
+  const automaticProductId = registrationProduct?.id ?? automaticFailureProduct?.id ?? null;
+  const automaticWorkflowActive = activeOrderProductScancode !== null ||
+    automaticRegistrationMutation.isPending ||
+    automaticRegistrationMutation.error !== null ||
+    (registrationState === "awaiting_completion" && registrationProduct !== null);
+  const automaticRouteActive = location.pathname.startsWith("/automatic");
+  const automaticRouteContext: AutomaticRegistrationRouteContext | null = gateway ? {
+    gateway,
+    progress: automaticProgress,
+    details: automaticProductDetails,
+    error: automaticRegistrationMutation.error,
+    failureProduct: automaticFailureProduct,
+    onComplete: completeAutomaticRegistration,
+    onDismissError: dismissAutomaticRegistrationError,
+  } : null;
+  const initialAutomaticSession = useRef({
+    routeActive: automaticRouteActive,
+    registrationState,
+    productId: registrationProduct?.id ?? null,
+    activeScancode: activeOrderProductScancode,
+  });
+
+  useEffect(() => {
+    const initial = initialAutomaticSession.current;
+    if (!initial.routeActive) return;
+    if (initial.registrationState === "registering" && initial.productId) {
+      setAppContext((current) => ({ ...current, active_order_product_scancode: null }));
+      void navigate(`/order-products/${initial.productId}`, { replace: true });
+    } else if (initial.registrationState === "idle" && initial.activeScancode) {
+      setAppContext((current) => ({ ...current, active_order_product_scancode: null }));
+      void navigate("/", { replace: true });
+    }
+  }, [
+    navigate,
+    setAppContext,
+  ]);
+
+  useEffect(() => {
+    if (automaticWorkflowActive && !automaticRouteActive) {
+      const route = automaticProductId
+        ? `/automatic/order-products/${automaticProductId}`
+        : "/automatic";
+      void navigate(route, { replace: true });
+    } else if (!automaticWorkflowActive && automaticRouteActive) {
+      void navigate("/", { replace: true });
+    } else if (
+      automaticWorkflowActive &&
+      automaticProductId &&
+      location.pathname === "/automatic"
+    ) {
+      void navigate(`/automatic/order-products/${automaticProductId}`, { replace: true });
+    }
+  }, [
+    automaticProductId,
+    automaticRouteActive,
+    automaticWorkflowActive,
+    location.pathname,
+    navigate,
+  ]);
 
   return (
     <>
@@ -527,22 +594,8 @@ export const HomePage: FC<{
           />
         ) : undefined}
       >
-        {gateway && (automaticRegistrationMutation.isPending ||
-        (registrationState === "awaiting_completion" && registrationProduct)) ? (
-          <AutomaticRegistrationPanel
-            gateway={gateway}
-            progress={automaticProgress}
-            details={automaticProductDetails}
-            onComplete={completeAutomaticRegistration}
-          />
-        ) : gateway && automaticRegistrationMutation.error ? (
-          <AutomaticRegistrationFailure
-            gateway={gateway}
-            error={automaticRegistrationMutation.error}
-            product={automaticFailureProduct}
-            details={automaticProductDetails}
-            onDismiss={dismissAutomaticRegistrationError}
-          />
+        {automaticRouteActive && automaticRouteContext ? (
+          <Outlet context={automaticRouteContext} />
         ) : registrationState === "idle" || registrationState === "registering" ? (
           <OrderSearchWorkspace gateway={gateway}>
             <Stack sx={{ height: "100%", alignItems: "center" }}>
