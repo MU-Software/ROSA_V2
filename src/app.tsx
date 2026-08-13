@@ -24,6 +24,12 @@ import { DebugPage } from "./pages/debug";
 import { ExternalDisplayPage } from "./pages/display";
 import { HomePage } from "./pages/home";
 import { NotFoundPage } from "./pages/notFound";
+import {
+  OrderDetailsRoute,
+  OrderProductDetailsRoute,
+  OrderSearchResultsRoute,
+  OrderWorkspaceNotFoundRoute,
+} from "./components/pages/home/orderSearch";
 import type { RegistrationDeskGateway } from "./gateways";
 import { useLocalStorageAppState } from "./hooks/useLocalStorageAppState";
 
@@ -125,7 +131,13 @@ export const App: FC<{
                 onLogout={onLogout}
               />
             )}
-          />
+          >
+            <Route index element={null} />
+            <Route path="orders" element={<OrderSearchResultsRoute />} />
+            <Route path="orders/:orderId" element={<OrderDetailsRoute />} />
+            <Route path="order-products/:productId" element={<OrderProductDetailsRoute />} />
+            <Route path="*" element={<OrderWorkspaceNotFoundRoute />} />
+          </Route>
           <Route path="/display" element={<ExternalDisplayPage />} />
           <Route
             path="/templates"

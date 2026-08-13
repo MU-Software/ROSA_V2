@@ -22,7 +22,24 @@ import {
   Typography,
   type ChipProps,
 } from "@mui/material";
-import { useEffect, useState, type FC, type FormEvent, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FC,
+  type FormEvent,
+  type ReactNode,
+} from "react";
+import {
+  Outlet,
+  useLocation,
+  useNavigate,
+  useOutletContext,
+  useParams,
+  useSearchParams,
+} from "react-router";
 import { QueryBoundary } from "../../elements/queryBoundary";
 import { useAppContext } from "../../../contexts";
 import {
@@ -93,16 +110,16 @@ export const OrderSearchWorkspace: FC<{
   children,
 }) => {
   const registrationDeskQueryClient = useRegistrationDeskQueryClient(gateway);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const {
     order_product_relation: restoredProduct,
     setAppContext,
   } = useAppContext();
-  const [query, setQuery] = useState("");
-  const [submittedQuery, setSubmittedQuery] = useState<string | null>(null);
-  const [selectedOrderId, setSelectedOrderId] = useState<EntityId | null>(null);
-  const [selectedProductId, setSelectedProductId] = useState<EntityId | null>(null);
-  const searching = useOrderSearchFetching(submittedQuery);
-  const openRegistrationProduct = (product: OrderProductRelation) => {
+  const routeQuery = searchParams.get("q") ?? "";
+  const searching = useOrderSearchFetching(routeQuery || null);
+  const openRegistrationProduct = useCallback((product: OrderProductRelation) => {
     setAppContext((current) => ({
       ...current,
       registration_state: current.registration_state === "idle"
@@ -111,8 +128,8 @@ export const OrderSearchWorkspace: FC<{
       order_product_relation: product,
       farewell_until: null,
     }));
-  };
-  const clearRegistrationProduct = () => {
+  }, [setAppContext]);
+  const clearRegistrationProduct = useCallback(() => {
     setAppContext((current) => ({
       ...current,
       registration_state: current.registration_state === "registering" ||
@@ -123,70 +140,61 @@ export const OrderSearchWorkspace: FC<{
       farewell_until: null,
       active_order_product_scancode: null,
     }));
-  };
-  const activeProductId = selectedProductId ??
-    (selectedOrderId ? null : restoredProduct?.id) ?? null;
-  const showIdleContent = !!gateway && !submittedQuery && !selectedOrderId && !activeProductId;
+  }, [setAppContext]);
+  const showIdleContent = !!gateway && location.pathname === "/";
+  const initialRoute = useRef({
+    pathname: location.pathname,
+    restoredProductId: restoredProduct?.id ?? null,
+  });
+  const previousPathname = useRef(location.pathname);
 
-  const search = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const normalizedQuery = query.trim();
+  useEffect(() => {
+    const { pathname, restoredProductId } = initialRoute.current;
+    initialRoute.current.restoredProductId = null;
+    if (!restoredProductId) return;
+    if (pathname === "/") {
+      void navigate(`/order-products/${restoredProductId}`, { replace: true });
+    } else if (!pathname.startsWith("/order-products/")) {
+      clearRegistrationProduct();
+    }
+  }, [clearRegistrationProduct, navigate]);
+
+  useEffect(() => {
+    const previous = previousPathname.current;
+    previousPathname.current = location.pathname;
+    if (
+      previous.startsWith("/order-products/") &&
+      !location.pathname.startsWith("/order-products/")
+    ) {
+      clearRegistrationProduct();
+    }
+  }, [clearRegistrationProduct, location.pathname]);
+
+  const search = (normalizedQuery: string) => {
     if (!normalizedQuery || searching) return;
     if (restoredProduct) clearRegistrationProduct();
-    setSelectedOrderId(null);
-    setSelectedProductId(null);
-    if (submittedQuery === normalizedQuery) {
+    if (routeQuery === normalizedQuery && location.pathname === "/orders") {
       void registrationDeskQueryClient.refetchOrderSearch(normalizedQuery);
     }
-    setSubmittedQuery(normalizedQuery);
+    const params = new URLSearchParams({ q: normalizedQuery });
+    void navigate({ pathname: "/orders", search: params.toString() });
   };
 
-  const reset = () => {
-    if (restoredProduct) clearRegistrationProduct();
-    setQuery("");
-    setSubmittedQuery(null);
-    setSelectedOrderId(null);
-    setSelectedProductId(null);
-  };
-
-  const selectProduct = (product: OrderProductRelation) => {
-    setSelectedProductId(product.id);
-    openRegistrationProduct(product);
-  };
-
-  const closeProduct = () => {
-    setSelectedProductId(null);
-    clearRegistrationProduct();
-  };
-
-  const openProductOrder = (orderId: EntityId) => {
-    setSelectedProductId(null);
-    clearRegistrationProduct();
-    setSelectedOrderId(orderId);
-  };
+  const outletContext = useMemo<OrderWorkspaceRouteContext>(() => ({
+    gateway,
+    clearRegistrationProduct,
+    openRegistrationProduct,
+  }), [clearRegistrationProduct, gateway, openRegistrationProduct]);
 
   return (
     <Stack sx={{ flex: 1, minHeight: 0 }}>
-      <Box component="form" onSubmit={search} sx={{ px: { xs: 1.5, sm: 2, md: 3 }, p: 2 }}>
-        <Stack direction="row" spacing={1}>
-          <TextField
-            fullWidth
-            size="small"
-            label="주문 검색"
-            placeholder="이름, 이메일, 전화번호 또는 주문번호"
-            value={query}
-            disabled={!gateway || searching}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-          <IconButton
-            type="submit"
-            disabled={!gateway || !query.trim() || searching}
-            sx={{ border: 1, borderColor: "divider", borderRadius: 1 }}
-          >
-            {searching ? <CircularProgress size={18} /> : <SearchOutlined />}
-          </IconButton>
-        </Stack>
-      </Box>
+      <OrderSearchForm
+        key={routeQuery}
+        initialQuery={routeQuery}
+        disabled={!gateway}
+        searching={searching}
+        onSearch={search}
+      />
       <Divider />
       <Box sx={{ position: "relative", flex: 1, minHeight: 0 }}>
         <Box
@@ -206,43 +214,204 @@ export const OrderSearchWorkspace: FC<{
           <Box sx={{ position: "relative", zIndex: 1, minHeight: "100%", bgcolor: "background.paper" }}>
             {!gateway ? (
               <Alert severity="warning" sx={{ m: 2 }}>주문 검색 gateway가 준비되지 않았습니다.</Alert>
-            ) : activeProductId ? (
-              <QueryBoundary resetKeys={[activeProductId]}>
-                <OrderProductDetailsQuery
-                  gateway={gateway}
-                  productId={activeProductId}
-                  orderName={selectedOrderId ? undefined : "저장된 주문상품"}
-                  backLabel={selectedOrderId ? "주문 상세" : "닫기"}
-                  onBack={closeProduct}
-                  onOpenOrder={selectedOrderId ? undefined : openProductOrder}
-                />
-              </QueryBoundary>
-            ) : selectedOrderId ? (
-              <QueryBoundary resetKeys={[selectedOrderId]}>
-                <OrderDetailsQuery
-                  key={selectedOrderId}
-                  gateway={gateway}
-                  orderId={selectedOrderId}
-                  backLabel={submittedQuery ? "검색 결과" : "닫기"}
-                  onBack={() => setSelectedOrderId(null)}
-                  onSelectOrder={setSelectedOrderId}
-                  onSelectProduct={selectProduct}
-                />
-              </QueryBoundary>
-            ) : submittedQuery ? (
-              <QueryBoundary resetKeys={[submittedQuery]}>
-                <OrderSearchQueryContent
-                  key={submittedQuery}
-                  gateway={gateway}
-                  query={submittedQuery}
-                  onReset={reset}
-                  onSelectOrder={setSelectedOrderId}
-                />
-              </QueryBoundary>
-            ) : null}
+            ) : (
+              <Outlet context={outletContext} />
+            )}
           </Box>
         )}
       </Box>
+    </Stack>
+  );
+};
+
+const OrderSearchForm: FC<{
+  initialQuery: string;
+  disabled: boolean;
+  searching: boolean;
+  onSearch: (query: string) => void;
+}> = ({ initialQuery, disabled, searching, onSearch }) => {
+  const [query, setQuery] = useState(initialQuery);
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    onSearch(query.trim());
+  };
+
+  return (
+    <Box component="form" onSubmit={submit} sx={{ px: { xs: 1.5, sm: 2, md: 3 }, p: 2 }}>
+      <Stack direction="row" spacing={1}>
+        <TextField
+          fullWidth
+          size="small"
+          label="주문 검색"
+          placeholder="이름, 이메일, 전화번호 또는 주문번호"
+          value={query}
+          disabled={disabled || searching}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+        <IconButton
+          type="submit"
+          disabled={disabled || !query.trim() || searching}
+          sx={{ border: 1, borderColor: "divider", borderRadius: 1 }}
+        >
+          {searching ? <CircularProgress size={18} /> : <SearchOutlined />}
+        </IconButton>
+      </Stack>
+    </Box>
+  );
+};
+
+type OrderWorkspaceRouteContext = {
+  gateway: RegistrationDeskGateway | null;
+  clearRegistrationProduct: () => void;
+  openRegistrationProduct: (product: OrderProductRelation) => void;
+};
+
+const useOrderWorkspaceRoute = (): OrderWorkspaceRouteContext =>
+  useOutletContext<OrderWorkspaceRouteContext>();
+
+const positivePage = (value: string | null): number => {
+  const page = Number(value);
+  return Number.isInteger(page) && page > 0 ? page : 1;
+};
+
+const searchRoute = (query: string, page = 1): string => {
+  const params = new URLSearchParams({ q: query });
+  if (page > 1) params.set("page", String(page));
+  return `/orders?${params.toString()}`;
+};
+
+const orderRoute = (orderId: EntityId, searchParams: URLSearchParams): string => {
+  const params = new URLSearchParams();
+  const query = searchParams.get("q");
+  const page = searchParams.get("page");
+  if (query) params.set("q", query);
+  if (page) params.set("page", page);
+  const search = params.toString();
+  return `/orders/${orderId}${search ? `?${search}` : ""}`;
+};
+
+const productRoute = (
+  productId: EntityId,
+  orderId: EntityId,
+  searchParams: URLSearchParams,
+): string => {
+  const params = new URLSearchParams({ order_id: orderId });
+  const query = searchParams.get("q");
+  const page = searchParams.get("page");
+  if (query) params.set("q", query);
+  if (page) params.set("page", page);
+  return `/order-products/${productId}?${params.toString()}`;
+};
+
+export const OrderSearchResultsRoute: FC = () => {
+  const { gateway } = useOrderWorkspaceRoute();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const query = searchParams.get("q")?.trim() ?? "";
+  const page = positivePage(searchParams.get("page"));
+
+  if (!gateway || !query) return <OrderWorkspaceNotFoundRoute />;
+
+  return (
+    <QueryBoundary resetKeys={[query, page]}>
+      <OrderSearchQueryContent
+        gateway={gateway}
+        query={query}
+        page={page}
+        onReset={() => void navigate("/")}
+        onSelectOrder={(id) => void navigate(orderRoute(id, searchParams))}
+        onPageChange={(nextPage) => void navigate(searchRoute(query, nextPage))}
+      />
+    </QueryBoundary>
+  );
+};
+
+export const OrderDetailsRoute: FC = () => {
+  const { gateway, clearRegistrationProduct, openRegistrationProduct } =
+    useOrderWorkspaceRoute();
+  const navigate = useNavigate();
+  const { orderId } = useParams();
+  const [searchParams] = useSearchParams();
+  const query = searchParams.get("q")?.trim() ?? "";
+  const searchPage = positivePage(searchParams.get("page"));
+  const relatedOrdersPage = positivePage(searchParams.get("related_page"));
+
+  if (!gateway || !orderId) return <OrderWorkspaceNotFoundRoute />;
+
+  const selectOrder = (id: EntityId) => {
+    const params = new URLSearchParams(searchParams);
+    params.delete("related_page");
+    void navigate(orderRoute(id, params));
+  };
+  const selectProduct = (product: OrderProductRelation) => {
+    openRegistrationProduct(product);
+    void navigate(productRoute(product.id, orderId, searchParams));
+  };
+  const changeRelatedOrdersPage = (page: number) => {
+    const params = new URLSearchParams(searchParams);
+    if (page > 1) params.set("related_page", String(page));
+    else params.delete("related_page");
+    void navigate({ pathname: `/orders/${orderId}`, search: params.toString() });
+  };
+
+  return (
+    <QueryBoundary resetKeys={[orderId]}>
+      <OrderDetailsQuery
+        gateway={gateway}
+        orderId={orderId}
+        relatedOrdersPage={relatedOrdersPage}
+        backLabel={query ? "검색 결과" : "닫기"}
+        onBack={() => {
+          clearRegistrationProduct();
+          void navigate(query ? searchRoute(query, searchPage) : "/");
+        }}
+        onSelectOrder={selectOrder}
+        onRelatedOrdersPageChange={changeRelatedOrdersPage}
+        onSelectProduct={selectProduct}
+      />
+    </QueryBoundary>
+  );
+};
+
+export const OrderProductDetailsRoute: FC = () => {
+  const { gateway, clearRegistrationProduct, openRegistrationProduct } =
+    useOrderWorkspaceRoute();
+  const navigate = useNavigate();
+  const { productId } = useParams();
+  const [searchParams] = useSearchParams();
+  const orderId = searchParams.get("order_id");
+
+  if (!gateway || !productId) return <OrderWorkspaceNotFoundRoute />;
+
+  const close = () => {
+    clearRegistrationProduct();
+    void navigate(orderId ? orderRoute(orderId, searchParams) : "/");
+  };
+
+  return (
+    <QueryBoundary resetKeys={[productId]}>
+      <OrderProductDetailsQuery
+        gateway={gateway}
+        productId={productId}
+        orderName={orderId ? undefined : "저장된 주문상품"}
+        backLabel={orderId ? "주문 상세" : "닫기"}
+        onBack={close}
+        onProductLoaded={openRegistrationProduct}
+        onOpenOrder={orderId ? undefined : (id) => {
+          clearRegistrationProduct();
+          void navigate(orderRoute(id, searchParams));
+        }}
+      />
+    </QueryBoundary>
+  );
+};
+
+export const OrderWorkspaceNotFoundRoute: FC = () => {
+  const navigate = useNavigate();
+  return (
+    <Stack spacing={2} sx={{ minHeight: 320, alignItems: "center", justifyContent: "center", p: 3 }}>
+      <Typography variant="h6">요청한 등록 화면을 열 수 없습니다.</Typography>
+      <Button variant="outlined" onClick={() => void navigate("/")}>처음으로</Button>
     </Stack>
   );
 };
@@ -253,16 +422,22 @@ const OrderProductDetailsQuery: FC<{
   orderName?: string;
   backLabel: string;
   onBack: () => void;
+  onProductLoaded: (product: OrderProductRelation) => void;
   onOpenOrder?: (orderId: EntityId) => void;
-}> = ({ gateway, productId, orderName, backLabel, onBack, onOpenOrder }) => {
+}> = ({
+  gateway,
+  productId,
+  orderName,
+  backLabel,
+  onBack,
+  onProductLoaded,
+  onOpenOrder,
+}) => {
   const { data } = useOrderProductQuery(gateway, productId);
-  const { setAppContext } = useAppContext();
 
   useEffect(() => {
-    setAppContext((current) => current.order_product_relation?.id === productId
-      ? { ...current, order_product_relation: data }
-      : current);
-  }, [data, productId, setAppContext]);
+    onProductLoaded(data);
+  }, [data, onProductLoaded]);
 
   return (
     <OrderProductDetails
@@ -285,15 +460,18 @@ const OrderProductDetailsQuery: FC<{
 const OrderSearchQueryContent: FC<{
   gateway: RegistrationDeskGateway;
   query: string;
+  page: number;
   onReset: () => void;
   onSelectOrder: (id: EntityId) => void;
+  onPageChange: (page: number) => void;
 }> = ({
   gateway,
   query,
+  page,
   onReset,
   onSelectOrder,
+  onPageChange,
 }) => {
-  const [page, setPage] = useState(1);
   const { data } = useOrderSearchQuery(gateway, query, page);
 
   return (
@@ -302,7 +480,7 @@ const OrderSearchQueryContent: FC<{
       result={data}
       onReset={onReset}
       onSelect={(order) => onSelectOrder(order.id)}
-      onPageChange={setPage}
+      onPageChange={onPageChange}
     />
   );
 };
@@ -310,12 +488,22 @@ const OrderSearchQueryContent: FC<{
 const OrderDetailsQuery: FC<{
   gateway: RegistrationDeskGateway;
   orderId: EntityId;
+  relatedOrdersPage: number;
   backLabel: string;
   onBack: () => void;
   onSelectOrder: (id: EntityId) => void;
+  onRelatedOrdersPageChange: (page: number) => void;
   onSelectProduct: (product: OrderProductRelation) => void;
-}> = ({ gateway, orderId, backLabel, onBack, onSelectOrder, onSelectProduct }) => {
-  const [relatedOrdersPage, setRelatedOrdersPage] = useState(1);
+}> = ({
+  gateway,
+  orderId,
+  relatedOrdersPage,
+  backLabel,
+  onBack,
+  onSelectOrder,
+  onRelatedOrdersPageChange,
+  onSelectProduct,
+}) => {
   const { data: order } = useOrderQuery(gateway, orderId);
   const { data: relatedOrders } = useRelatedOrdersQuery(
     gateway,
@@ -332,7 +520,7 @@ const OrderDetailsQuery: FC<{
       backLabel={backLabel}
       onBack={onBack}
       onSelectOrder={onSelectOrder}
-      onRelatedOrdersPageChange={setRelatedOrdersPage}
+      onRelatedOrdersPageChange={onRelatedOrdersPageChange}
       onSelectProduct={onSelectProduct}
       refunding={refundMutation.isPending}
       refundError={refundMutation.error?.message ?? null}
