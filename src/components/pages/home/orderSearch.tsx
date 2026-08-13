@@ -37,9 +37,12 @@ import {
 import type { RegistrationDeskGateway } from "../../../gateways";
 import {
   ORDER_SEARCH_PAGE_SIZE,
+  RELATED_ORDERS_PAGE_SIZE,
   useOrderProductQuery,
+  useOrderQuery,
   useOrderSearchFetching,
   useOrderSearchQuery,
+  useRelatedOrdersQuery,
   useRefundOrderMutation,
   useRegistrationDeskQueryClient,
 } from "../../../hooks/useRegistrationDesk";
@@ -123,7 +126,7 @@ export const OrderSearchWorkspace: FC<{
   };
   const activeProductId = selectedProductId ??
     (selectedOrderId ? null : restoredProduct?.id) ?? null;
-  const showIdleContent = !!gateway && !submittedQuery && !activeProductId;
+  const showIdleContent = !!gateway && !submittedQuery && !selectedOrderId && !activeProductId;
 
   const search = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -154,6 +157,12 @@ export const OrderSearchWorkspace: FC<{
   const closeProduct = () => {
     setSelectedProductId(null);
     clearRegistrationProduct();
+  };
+
+  const openProductOrder = (orderId: EntityId) => {
+    setSelectedProductId(null);
+    clearRegistrationProduct();
+    setSelectedOrderId(orderId);
   };
 
   return (
@@ -205,6 +214,19 @@ export const OrderSearchWorkspace: FC<{
                   orderName={selectedOrderId ? undefined : "저장된 주문상품"}
                   backLabel={selectedOrderId ? "주문 상세" : "닫기"}
                   onBack={closeProduct}
+                  onOpenOrder={selectedOrderId ? undefined : openProductOrder}
+                />
+              </QueryBoundary>
+            ) : selectedOrderId ? (
+              <QueryBoundary resetKeys={[selectedOrderId]}>
+                <OrderDetailsQuery
+                  key={selectedOrderId}
+                  gateway={gateway}
+                  orderId={selectedOrderId}
+                  backLabel={submittedQuery ? "검색 결과" : "닫기"}
+                  onBack={() => setSelectedOrderId(null)}
+                  onSelectOrder={setSelectedOrderId}
+                  onSelectProduct={selectProduct}
                 />
               </QueryBoundary>
             ) : submittedQuery ? (
@@ -213,11 +235,8 @@ export const OrderSearchWorkspace: FC<{
                   key={submittedQuery}
                   gateway={gateway}
                   query={submittedQuery}
-                  selectedOrderId={selectedOrderId}
                   onReset={reset}
                   onSelectOrder={setSelectedOrderId}
-                  onBack={() => setSelectedOrderId(null)}
-                  onSelectProduct={selectProduct}
                 />
               </QueryBoundary>
             ) : null}
@@ -234,7 +253,8 @@ const OrderProductDetailsQuery: FC<{
   orderName?: string;
   backLabel: string;
   onBack: () => void;
-}> = ({ gateway, productId, orderName, backLabel, onBack }) => {
+  onOpenOrder?: (orderId: EntityId) => void;
+}> = ({ gateway, productId, orderName, backLabel, onBack, onOpenOrder }) => {
   const { data } = useOrderProductQuery(gateway, productId);
   const { setAppContext } = useAppContext();
 
@@ -249,7 +269,15 @@ const OrderProductDetailsQuery: FC<{
       orderId={data.order.id}
       product={data}
       gateway={gateway}
-      navigation={{ orderName: orderName ?? data.order.name, backLabel, onBack }}
+      navigation={{
+        orderName: orderName ?? data.order.name,
+        backLabel,
+        onBack,
+        orderDetailsAction: onOpenOrder ? {
+          label: "주문 상세",
+          onClick: () => onOpenOrder(data.order.id),
+        } : undefined,
+      }}
     />
   );
 };
@@ -257,42 +285,59 @@ const OrderProductDetailsQuery: FC<{
 const OrderSearchQueryContent: FC<{
   gateway: RegistrationDeskGateway;
   query: string;
-  selectedOrderId: EntityId | null;
   onReset: () => void;
   onSelectOrder: (id: EntityId) => void;
-  onBack: () => void;
-  onSelectProduct: (product: OrderProductRelation) => void;
 }> = ({
   gateway,
   query,
-  selectedOrderId,
   onReset,
   onSelectOrder,
-  onBack,
-  onSelectProduct,
 }) => {
   const [page, setPage] = useState(1);
   const { data } = useOrderSearchQuery(gateway, query, page);
-  const selectedOrder = data.results.find(({ id }) => id === selectedOrderId) ?? null;
-  const refundMutation = useRefundOrderMutation(gateway);
 
-  return selectedOrder ? (
-    <OrderDetails
-      order={selectedOrder}
-      onBack={onBack}
-      onSelectProduct={onSelectProduct}
-      refunding={refundMutation.isPending}
-      refundError={refundMutation.error?.message ?? null}
-      onClearRefundError={refundMutation.reset}
-      onRefund={() => refundMutation.mutateAsync({ order_id: selectedOrder.id })}
-    />
-  ) : (
+  return (
     <OrderSearchResults
       page={page}
       result={data}
       onReset={onReset}
       onSelect={(order) => onSelectOrder(order.id)}
       onPageChange={setPage}
+    />
+  );
+};
+
+const OrderDetailsQuery: FC<{
+  gateway: RegistrationDeskGateway;
+  orderId: EntityId;
+  backLabel: string;
+  onBack: () => void;
+  onSelectOrder: (id: EntityId) => void;
+  onSelectProduct: (product: OrderProductRelation) => void;
+}> = ({ gateway, orderId, backLabel, onBack, onSelectOrder, onSelectProduct }) => {
+  const [relatedOrdersPage, setRelatedOrdersPage] = useState(1);
+  const { data: order } = useOrderQuery(gateway, orderId);
+  const { data: relatedOrders } = useRelatedOrdersQuery(
+    gateway,
+    order.user.unique_id,
+    relatedOrdersPage,
+  );
+  const refundMutation = useRefundOrderMutation(gateway);
+
+  return (
+    <OrderDetails
+      order={order}
+      relatedOrders={relatedOrders}
+      relatedOrdersPage={relatedOrdersPage}
+      backLabel={backLabel}
+      onBack={onBack}
+      onSelectOrder={onSelectOrder}
+      onRelatedOrdersPageChange={setRelatedOrdersPage}
+      onSelectProduct={onSelectProduct}
+      refunding={refundMutation.isPending}
+      refundError={refundMutation.error?.message ?? null}
+      onClearRefundError={refundMutation.reset}
+      onRefund={() => refundMutation.mutateAsync({ order_id: order.id })}
     />
   );
 };
@@ -399,7 +444,12 @@ const OrderSearchResult: FC<{ order: Order; onSelect: () => void }> = ({ order, 
 
 const OrderDetails: FC<{
   order: Order;
+  relatedOrders: { count: number; results: Order[] };
+  relatedOrdersPage: number;
+  backLabel: string;
   onBack: () => void;
+  onSelectOrder: (id: EntityId) => void;
+  onRelatedOrdersPageChange: (page: number) => void;
   onSelectProduct: (product: OrderProductRelation) => void;
   refunding: boolean;
   refundError: string | null;
@@ -407,7 +457,12 @@ const OrderDetails: FC<{
   onRefund: () => Promise<void>;
 }> = ({
   order,
+  relatedOrders,
+  relatedOrdersPage,
+  backLabel,
   onBack,
+  onSelectOrder,
+  onRelatedOrdersPageChange,
   onSelectProduct,
   refunding,
   refundError,
@@ -446,7 +501,7 @@ const OrderDetails: FC<{
         spacing={1}
         sx={{ px: { xs: 1.5, md: 2 }, py: 1, alignItems: "center" }}
       >
-        <Button size="small" startIcon={<ArrowBack />} onClick={onBack}>검색 결과</Button>
+        <Button size="small" startIcon={<ArrowBack />} onClick={onBack}>{backLabel}</Button>
       </Stack>
       <Divider />
 
@@ -500,6 +555,56 @@ const OrderDetails: FC<{
             <Typography variant="body2" color="text.secondary">
               {[customer?.email ?? order.user.email, customer?.phone].filter(Boolean).join(" · ")}
             </Typography>
+          </Paper>
+        </Stack>
+
+        <Stack spacing={1}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+            같은 계정의 주문 {relatedOrders.count}건
+          </Typography>
+          <Paper variant="outlined" sx={{ overflow: "hidden" }}>
+            <Stack divider={<Divider flexItem />}>
+              {relatedOrders.results.map((relatedOrder) => {
+                const relatedPayment = PAYMENT_STATUS_PRESENTATION[relatedOrder.current_status];
+                const current = relatedOrder.id === order.id;
+                return (
+                  <Stack
+                    key={relatedOrder.id}
+                    direction={{ xs: "column", sm: "row" }}
+                    spacing={1}
+                    sx={{ p: 1.5, alignItems: { sm: "center" }, justifyContent: "space-between" }}
+                  >
+                    <Box sx={{ minWidth: 0 }}>
+                      <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                          {relatedOrder.name}
+                        </Typography>
+                        <Chip size="small" color={relatedPayment.color} label={relatedPayment.label} />
+                        {current && <Chip size="small" variant="outlined" label="현재 주문" />}
+                      </Stack>
+                      <Typography variant="caption" color="text.secondary">
+                        {formatDateTime(relatedOrder.first_paid_at)} · {formatPrice(relatedOrder.current_paid_price)}
+                      </Typography>
+                    </Box>
+                    <Button
+                      size="small"
+                      disabled={current}
+                      onClick={() => onSelectOrder(relatedOrder.id)}
+                    >
+                      열기
+                    </Button>
+                  </Stack>
+                );
+              })}
+            </Stack>
+            {relatedOrders.count > RELATED_ORDERS_PAGE_SIZE && (
+              <Pagination
+                page={relatedOrdersPage}
+                count={Math.ceil(relatedOrders.count / RELATED_ORDERS_PAGE_SIZE)}
+                onChange={(_event, page) => onRelatedOrdersPageChange(page)}
+                sx={{ p: 1.5, display: "flex", justifyContent: "center" }}
+              />
+            )}
           </Paper>
         </Stack>
 

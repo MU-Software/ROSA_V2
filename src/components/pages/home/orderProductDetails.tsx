@@ -63,6 +63,10 @@ export type OrderProductDetailsNavigation = {
   orderName?: string;
   backLabel: string;
   onBack: () => void;
+  orderDetailsAction?: {
+    label: string;
+    onClick: () => void;
+  };
 };
 
 export const OrderProductDetails: FC<{
@@ -203,6 +207,11 @@ export const OrderProductDetails: FC<{
             <Button size="small" startIcon={<ArrowBack />} onClick={navigation.onBack}>
               {navigation.backLabel}
             </Button>
+            {navigation.orderDetailsAction && (
+              <Button size="small" onClick={navigation.orderDetailsAction.onClick}>
+                {navigation.orderDetailsAction.label}
+              </Button>
+            )}
           </Stack>
           <Divider />
         </>

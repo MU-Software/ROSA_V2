@@ -8,6 +8,7 @@ import {
 import { useMemo } from "react";
 import type {
   EntityId,
+  Order,
   OrderProductScancode,
 } from "../domain";
 import type {
@@ -28,6 +29,7 @@ export const REGISTRATION_DESK_QUERY_KEYS = {
 };
 
 export const ORDER_SEARCH_PAGE_SIZE = 50;
+export const RELATED_ORDERS_PAGE_SIZE = 10;
 
 const UUID_PATTERN = /^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i;
 
@@ -66,6 +68,37 @@ const getLookupResult = (
   return lookup;
 };
 
+const getOrderResult = (results: Order[]): Order => {
+  const order = results[0];
+  if (!order) throw new Error("주문을 찾을 수 없습니다.");
+  return order;
+};
+
+const orderQueryOptions = (
+  gateway: RegistrationDeskGateway,
+  id: EntityId,
+) => queryOptions({
+  queryKey: [...REGISTRATION_DESK_QUERY_KEYS.ORDERS, "detail", id],
+  queryFn: async () => getOrderResult((await gateway.searchOrders({
+    order_id: id,
+    page: 1,
+    page_size: 1,
+  })).results),
+});
+
+const relatedOrdersQueryOptions = (
+  gateway: RegistrationDeskGateway,
+  userUniqueId: EntityId,
+  page: number,
+) => queryOptions({
+  queryKey: [...REGISTRATION_DESK_QUERY_KEYS.ORDERS, "user", userUniqueId, page],
+  queryFn: () => gateway.searchOrders({
+    user_unique_id: userUniqueId,
+    page,
+    page_size: RELATED_ORDERS_PAGE_SIZE,
+  }),
+});
+
 const orderProductQueryOptions = (
   gateway: RegistrationDeskGateway,
   id: EntityId,
@@ -95,6 +128,17 @@ export const useOrderSearchQuery = (
   query: string,
   page: number,
 ) => useSuspenseQuery(orderSearchQueryOptions(gateway, query, page));
+
+export const useOrderQuery = (
+  gateway: RegistrationDeskGateway,
+  id: EntityId,
+) => useSuspenseQuery(orderQueryOptions(gateway, id));
+
+export const useRelatedOrdersQuery = (
+  gateway: RegistrationDeskGateway,
+  userUniqueId: EntityId,
+  page: number,
+) => useSuspenseQuery(relatedOrdersQueryOptions(gateway, userUniqueId, page));
 
 export const useOrderProductQuery = (
   gateway: RegistrationDeskGateway,
