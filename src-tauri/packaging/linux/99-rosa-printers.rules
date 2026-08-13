@@ -1,0 +1,13 @@
+# ROSA 는 CUPS 를 거치지 않고 libusb 로 프린터를 직접 연다.
+# USB 장치 노드의 기본값(root:lp 0664)으로는 데스크 계정이 열 수 없다.
+
+# 프로파일에 없는 기종도 장치 진단으로 봐야 하므로 벤더가 아니라 프린터 클래스로 연다.
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ENV{ID_USB_INTERFACES}=="*:07*:*", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+
+# 클래스를 벤더 지정으로 내놓는 기종을 위한 보강.
+# HPRT (SL43)
+SUBSYSTEM=="usb", ATTR{idVendor}=="2aaf", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+# Brother (QL 계열)
+SUBSYSTEM=="usb", ATTR{idVendor}=="04f9", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+# GOOJPRT PT-390 (STMicroelectronics VID)
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="5720", MODE="0660", GROUP="plugdev", TAG+="uaccess"

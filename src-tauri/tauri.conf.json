@@ -33,6 +33,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "linux": {
+      "deb": {
+        "files": {
+          "/usr/lib/udev/rules.d/99-rosa-printers.rules": "packaging/linux/99-rosa-printers.rules"
+        }
+      }
+    },
     "macOS": {
       "infoPlist": "Info.plist",
       "entitlements": "Entitlements.plist"
