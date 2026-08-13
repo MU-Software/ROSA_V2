@@ -24,6 +24,7 @@ export {
 } from "./common";
 export { GOOJPRT_PT390 } from "./goojprtPt390";
 export { HPRT_SL43 } from "./hprtSl43";
+export { DIAGNOSTIC_PRINTER_PROFILES, findDiagnosticPrinterProfile } from "./diagnostic";
 
 export const PRINTER_PROFILES: PrinterProfile[] = [BROTHER_QL_820NWB, HPRT_SL43, GOOJPRT_PT390];
 

@@ -4,6 +4,7 @@ import { createPrinterTransports } from "../adapters/printer";
 import {
   knownPrinterFilter,
   findProfile,
+  findDiagnosticPrinterProfile,
   LABEL_GAP_MM_SETTING,
   LABEL_HEIGHT_MM_SETTING,
   LABEL_WIDTH_MM_SETTING,
@@ -102,6 +103,8 @@ export type PrintOptions = {
   onPhase?: (phase: PrintPhase) => void;
 };
 
+export type PrinterDiscoveryOptions = { includeUnknown?: boolean };
+
 type ActiveConnection = PrinterConnection & {
   session: DeviceSession;
   /** 잡을 직렬화한다. 겹쳐 보내면 프린터가 두 잡의 바이트를 하나로 읽는다. */
@@ -196,7 +199,7 @@ export class PrinterManager {
   private printRoutes: Partial<Record<RegistrationPrintKind, string>> = {};
   private registrations = new Set<string>();
   private changeListeners = new Set<() => void>();
-  private refreshing?: Promise<PrinterDevice[]>;
+  private refreshings = new Map<boolean, Promise<PrinterDevice[]>>();
 
   constructor(transports: DeviceTransport[] = createPrinterTransports()) {
     this.transports = transports;
@@ -249,25 +252,27 @@ export class PrinterManager {
   getSettings(key: string): PrinterSettings {
     const device = this.devices.get(key);
     if (!device) return EMPTY_SETTINGS;
+    const profile = this.connections.get(key)?.profile ?? device.profile;
     const stored = this.settings[this.deviceStorageId(device)] ??
-      (device.profile ? this.legacyProfileSettings[device.profile.id] : undefined) ??
+      (profile ? this.legacyProfileSettings[profile.id] : undefined) ??
       EMPTY_SETTINGS;
-    if (!device.profile) return stored;
+    if (!profile) return stored;
     try {
-      return resolvePrinterSettings(device.profile, stored);
+      return resolvePrinterSettings(profile, stored);
     } catch (reason) {
-      console.warn(`잘못된 ${device.profile.name} 설정을 기본값으로 대체합니다`, reason);
-      return resolvePrinterSettings(device.profile, EMPTY_SETTINGS);
+      console.warn(`잘못된 ${profile.name} 설정을 기본값으로 대체합니다`, reason);
+      return resolvePrinterSettings(profile, EMPTY_SETTINGS);
     }
   }
 
   updateSettings(key: string, patch: PrinterSettings): void {
     const device = this.devices.get(key);
     if (!device) throw new Error(`프린터 "${key}" 가 목록에 없습니다`);
-    if (!device.profile) throw new Error(`"${device.name}" 은 지원하는 프린터가 아닙니다`);
+    const profile = this.connections.get(key)?.profile ?? device.profile;
+    if (!profile) throw new Error(`"${device.name}" 은 지원하는 프린터가 아닙니다`);
     const id = this.deviceStorageId(device);
     const settings = { ...this.getSettings(key), ...patch };
-    this.settings[id] = resolvePrinterSettings(device.profile, settings);
+    this.settings[id] = resolvePrinterSettings(profile, settings);
     this.persistSettings();
     this.notifyChange();
   }
@@ -376,14 +381,20 @@ export class PrinterManager {
     this.notifyChange();
   }
 
-  async refresh(): Promise<PrinterDevice[]> {
-    this.refreshing ??= this.runRefresh().finally(() => { this.refreshing = undefined; });
-    return this.refreshing;
+  async refresh(options: PrinterDiscoveryOptions = {}): Promise<PrinterDevice[]> {
+    const includeUnknown = options.includeUnknown ?? false;
+    const current = this.refreshings.get(includeUnknown);
+    if (current) return current;
+    const refreshing = this.runRefresh(includeUnknown).finally(() => {
+      if (this.refreshings.get(includeUnknown) === refreshing) this.refreshings.delete(includeUnknown);
+    });
+    this.refreshings.set(includeUnknown, refreshing);
+    return refreshing;
   }
 
-  private async runRefresh(): Promise<PrinterDevice[]> {
+  private async runRefresh(includeUnknown: boolean): Promise<PrinterDevice[]> {
     const found = new Map<string, PrinterDevice>();
-    const filter = knownPrinterFilter();
+    const filter = includeUnknown ? undefined : knownPrinterFilter();
 
     // BLE 스캔 혼자 8 초를 쓰므로 직렬로 훑으면 안 된다.
     const listings = await Promise.all(
@@ -472,10 +483,10 @@ export class PrinterManager {
   }
 
   /** WebUSB 처럼 사용자가 골라야 하는 전송에서 기기 하나를 추가한다. */
-  async requestDevice(): Promise<PrinterDevice | null> {
+  async requestDevice(options: PrinterDiscoveryOptions = {}): Promise<PrinterDevice | null> {
     for (const transport of this.transports) {
       if (!transport.request) continue;
-      const info = await transport.request(knownPrinterFilter());
+      const info = await transport.request(options.includeUnknown ? undefined : knownPrinterFilter());
       if (!info) continue;
       const device: PrinterDevice = { ...info, profile: findProfile(info), transportRef: transport };
       this.devices.set(device.key, device);
@@ -507,13 +518,29 @@ export class PrinterManager {
   }
 
   async connect(key: string): Promise<PrinterConnection> {
+    return this.connectWithProfile(key);
+  }
+
+  async connectForDiagnostics(key: string, profileId: string): Promise<PrinterConnection> {
+    const device = this.devices.get(key);
+    if (!device) throw new Error(`프린터 "${key}" 가 목록에 없습니다`);
+    const profile = findDiagnosticPrinterProfile(profileId, device.transport);
+    if (!profile) throw new Error(`"${profileId}" 진단 언어는 ${device.transport} 연결을 지원하지 않습니다`);
+
+    const existing = this.connections.get(key);
+    if (existing?.profile.id === profile.id) return existing;
+    if (existing) await this.disconnect(key);
+    return this.connectWithProfile(key, profile);
+  }
+
+  private async connectWithProfile(key: string, profileOverride?: PrinterProfile): Promise<PrinterConnection> {
     const existing = this.connections.get(key);
     if (existing) return existing;
     const pending = this.connecting.get(key);
     if (pending) return pending;
 
     this.setState(key, { status: "connecting" });
-    const opening = this.openConnection(key);
+    const opening = this.openConnection(key, profileOverride);
     this.connecting.set(key, opening);
     try {
       return await opening;
@@ -525,12 +552,12 @@ export class PrinterManager {
     }
   }
 
-  private async openConnection(key: string): Promise<PrinterConnection> {
+  private async openConnection(key: string, profileOverride?: PrinterProfile): Promise<PrinterConnection> {
     const device = this.devices.get(key);
     if (!device) throw new Error(`프린터 "${key}" 가 목록에 없습니다`);
-    if (!device.profile) throw new Error(`"${device.name}" 은 지원하는 프린터가 아닙니다`);
+    const profile = profileOverride ?? device.profile;
+    if (!profile) throw new Error(`"${device.name}" 은 지원하는 프린터가 아닙니다`);
 
-    const profile = device.profile;
     const transport = device.transportRef;
     const link = profile.links[transport.kind];
     if (!link) throw new Error(`${profile.name} 은 ${transport.kind} 로 연결할 수 없습니다`);
@@ -622,6 +649,19 @@ export class PrinterManager {
     connection.probe = await connection.profile.probe(connection.session);
     this.notifyChange();
     return connection.probe;
+  }
+
+  async transact(key: string, request: Uint8Array, responseLength = 0, timeoutMs = 1000): Promise<Uint8Array> {
+    const connection = this.requireConnection(key);
+    const run = connection.queue.then(async () => {
+      if (this.connections.get(key) !== connection) throw new Error(`프린터 "${key}" 연결이 끊겼습니다`);
+      if (request.length > 0) await connection.session.write(request);
+      return responseLength > 0
+        ? connection.session.read(responseLength, timeoutMs)
+        : new Uint8Array();
+    });
+    connection.queue = run.then(() => undefined, () => undefined);
+    return run;
   }
 
   // ---------- 인쇄 ----------

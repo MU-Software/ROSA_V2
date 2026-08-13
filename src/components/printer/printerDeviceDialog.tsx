@@ -24,6 +24,7 @@ import {
 } from "../../apis/printer";
 import { usePrintMutation } from "../../hooks/usePrintMutation";
 import {
+  usePrinterConnection,
   usePrinterDevices,
   usePrinterSettings,
   usePrinterState,
@@ -70,9 +71,11 @@ type SettingsContentProps = {
 };
 
 const PrinterSettingsContent: FC<SettingsContentProps> = ({ device, onClose }) => {
+  const connection = usePrinterConnection(device.key);
   const state = usePrinterState(device.key);
   const stored = usePrinterSettings(device.key);
-  const settingFields = device.profile?.settings ?? [];
+  const profile = connection?.profile ?? device.profile;
+  const settingFields = profile?.settings ?? [];
   const [settingValues, setSettingValues] = useState<Record<string, string>>(() =>
     Object.fromEntries(settingFields.map((field) => [field.id, String(stored[field.id])])));
   const [connectionError, setConnectionError] = useState<string | null>(null);
@@ -120,7 +123,6 @@ const PrinterSettingsContent: FC<SettingsContentProps> = ({ device, onClose }) =
     try {
       saveSettings();
       if (!printerManager.isConnected(device.key)) await printerManager.connect(device.key);
-      const profile = device.profile;
       if (!profile) throw new Error("지원하는 프린터가 아닙니다");
       const { width, height } = printerManager.imageSize(device.key);
       const card = drawTestCard({
@@ -145,7 +147,7 @@ const PrinterSettingsContent: FC<SettingsContentProps> = ({ device, onClose }) =
       <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap" }}>
         <Typography variant="subtitle1">{device.name}</Typography>
         <Chip size="small" label={TRANSPORT_LABELS[device.transport]} />
-        <Chip size="small" color="primary" label={device.profile?.name ?? "지원하지 않는 기기"} />
+        <Chip size="small" color="primary" label={profile?.name ?? "지원하지 않는 기기"} />
       </Stack>
       <Typography variant="caption" color="text.secondary">{describeDevice(device)}</Typography>
 
@@ -159,7 +161,7 @@ const PrinterSettingsContent: FC<SettingsContentProps> = ({ device, onClose }) =
       {mutation.error && mutation.error.message !== connectionError && <Alert severity="error">{mutation.error.message}</Alert>}
       {state.status === "faulted" && state.error && <Alert severity="error">{state.error.message}</Alert>}
 
-      {device.profile?.mediaSizeSource === "device" && (
+      {profile?.mediaSizeSource === "device" && (
         <Alert severity="info">이 프린터는 장착된 라벨 크기를 직접 읽으므로 임의로 변경할 수 없습니다.</Alert>
       )}
       <Box
