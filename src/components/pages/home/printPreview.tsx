@@ -1,4 +1,3 @@
-import { QrCode2 } from "@mui/icons-material";
 import {
   Alert,
   Box,
@@ -11,112 +10,72 @@ import {
   Divider,
   Paper,
   Stack,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
 } from "@mui/material";
-import type { FC } from "react";
+import { useState, type FC } from "react";
+import { PrintTemplateRenderer } from "../../printing/templateRenderer";
 import {
   getPaidOptionExchangeTargets,
   type OrderProductOptionRelation,
   type OrderProductRelation,
 } from "../../../domain";
 import { selectBadgeTemplate } from "../../../printing/templates";
-
-const QrPlaceholder: FC = () => (
-  <Box
-    sx={{
-      aspectRatio: "1",
-      minWidth: 72,
-      maxWidth: 132,
-      display: "grid",
-      placeItems: "center",
-      border: 1,
-      borderColor: "grey.900",
-      bgcolor: "common.white",
-    }}
-  >
-    <Stack spacing={0.25} sx={{ alignItems: "center" }}>
-      <QrCode2 sx={{ fontSize: { xs: 40, sm: 64 } }} />
-      <Typography variant="caption" sx={{ fontSize: { xs: 8, sm: 10 } }}>QR 연동 예정</Typography>
-    </Stack>
-  </Box>
-);
+import type { TemplateLayoutType } from "../../../printing/templateDocument";
 
 const BadgePreview: FC<{ product: OrderProductRelation }> = ({ product }) => {
+  const [layoutType, setLayoutType] = useState<TemplateLayoutType>("wide");
   const ticket = product.ticket_info;
   if (!ticket) return null;
   const template = selectBadgeTemplate(product);
-  const roleMarker = template.variant === "solid"
-    ? { bgcolor: "common.black", color: "common.white", border: 1, borderColor: "common.black" }
-    : template.variant === "outlined"
-    ? { border: 2, borderColor: "common.black" }
-    : { border: 1, borderColor: "grey.400" };
 
   return (
     <Stack spacing={1}>
-      <Stack direction="row" spacing={1} sx={{ alignItems: "center", justifyContent: "space-between" }}>
+      <Stack
+        direction={{ xs: "column", sm: "row" }}
+        spacing={1}
+        sx={{ alignItems: { xs: "stretch", sm: "center" }, justifyContent: "space-between" }}
+      >
         <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>명찰</Typography>
-        <Chip size="small" label={template.name} />
+        <Stack direction="row" spacing={1} sx={{ alignItems: "center", justifyContent: "flex-end" }}>
+          <Chip size="small" label={template.name} />
+          <Chip
+            size="small"
+            variant="outlined"
+            label={template.document.orientation === "landscape" ? "가로" : "세로"}
+          />
+          <ToggleButtonGroup
+            exclusive
+            size="small"
+            value={layoutType}
+            onChange={(_event, next: TemplateLayoutType | null) => {
+              if (next) setLayoutType(next);
+            }}
+          >
+            <ToggleButton value="wide">Wide</ToggleButton>
+            <ToggleButton value="compact">Compact</ToggleButton>
+          </ToggleButtonGroup>
+        </Stack>
       </Stack>
       <Paper
         variant="outlined"
         sx={{
           width: "100%",
-          maxWidth: 720,
-          aspectRatio: "90 / 38",
+          maxWidth: layoutType === "wide" ? 720 : 480,
           mx: "auto",
-          p: { xs: 1.5, sm: 3 },
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) auto",
-          gap: { xs: 1.5, sm: 3 },
-          alignItems: "stretch",
-          bgcolor: "common.white",
-          color: "common.black",
           overflow: "hidden",
         }}
       >
-        <Stack sx={{ minWidth: 0, justifyContent: "space-between" }}>
-          <Typography variant="overline" sx={{ fontWeight: 700, lineHeight: 1 }}>ROSA</Typography>
-          <Box sx={{ minWidth: 0 }}>
-            <Typography
-              sx={{
-                fontSize: "clamp(1.15rem, 4vw, 2.6rem)",
-                fontWeight: 800,
-                lineHeight: 1.1,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {ticket.name}
-            </Typography>
-            <Typography
-              color="text.secondary"
-              sx={{
-                mt: 0.5,
-                fontSize: "clamp(0.7rem, 2vw, 1.15rem)",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {ticket.organization || "소속 없음"}
-            </Typography>
-          </Box>
-          <Typography
-            sx={{
-              alignSelf: "flex-start",
-              px: 1.25,
-              py: 0.25,
-              borderRadius: 0.75,
-              fontWeight: 800,
-              fontSize: "clamp(0.7rem, 2vw, 1rem)",
-              ...roleMarker,
-            }}
-          >
-            {template.role_label}
-          </Typography>
-        </Stack>
-        <QrPlaceholder />
+        <PrintTemplateRenderer
+          document={template.document}
+          layoutType={layoutType}
+          values={{
+            "ticket.name": ticket.name,
+            "ticket.organization": ticket.organization ?? undefined,
+            "badge.role_label": template.role_label,
+          }}
+        />
       </Paper>
     </Stack>
   );

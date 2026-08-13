@@ -1,33 +1,211 @@
 import type { OrderProductRelation } from "../domain";
+import {
+  printTemplateDocumentSchema,
+  type PrintTemplateDocument,
+} from "./templateDocument";
 
-export const BUILT_IN_BADGE_TEMPLATES = [
-  {
+export type BuiltInBadgeTemplate = {
+  template_id: string;
+  tag_code: string;
+  name: string;
+  role_label: string;
+  priority: number;
+  document: PrintTemplateDocument;
+};
+
+type BadgeTemplateVariant = "solid" | "outlined" | "plain";
+
+const createBadgeTemplate = (
+  template: Omit<BuiltInBadgeTemplate, "document"> & { variant: BadgeTemplateVariant },
+): BuiltInBadgeTemplate => {
+  const roleStyle = template.variant === "solid"
+    ? {
+      color: "#ffffff",
+      background_color: "#000000",
+      border_color: "#000000",
+      border_width_mm: 0.3,
+    }
+    : template.variant === "outlined"
+    ? {
+      color: "#000000",
+      background_color: "transparent",
+      border_color: "#000000",
+      border_width_mm: 0.5,
+    }
+    : {
+      color: "#000000",
+      background_color: "transparent",
+      border_color: "#999999",
+      border_width_mm: 0.25,
+    };
+
+  const document = printTemplateDocumentSchema.parse({
+    schema_version: 1,
+    template_id: template.template_id,
+    name: template.name,
+    orientation: "landscape",
+    layouts: {
+      wide: {
+        media: { long_edge_mm: 90, short_edge_mm: 38 },
+        elements: [
+          {
+            id: "brand",
+            kind: "text",
+            frame: { x_mm: 3, y_mm: 3, width_mm: 63, height_mm: 4 },
+            source: { type: "literal", value: "ROSA" },
+            style: {
+              font_size_mm: 2.4,
+              min_font_size_mm: 1.8,
+              font_weight: 800,
+              vertical_align: "top",
+            },
+          },
+          {
+            id: "name",
+            kind: "text",
+            frame: { x_mm: 3, y_mm: 11, width_mm: 63, height_mm: 9 },
+            source: { type: "binding", binding: "ticket.name" },
+            style: { font_size_mm: 5.5, min_font_size_mm: 2.8, font_weight: 900 },
+          },
+          {
+            id: "organization",
+            kind: "text",
+            frame: { x_mm: 3, y_mm: 20, width_mm: 63, height_mm: 6 },
+            source: {
+              type: "binding",
+              binding: "ticket.organization",
+              fallback: "소속 없음",
+            },
+            style: {
+              font_size_mm: 3,
+              min_font_size_mm: 1.8,
+              font_weight: 400,
+              vertical_align: "top",
+            },
+          },
+          {
+            id: "role",
+            kind: "text",
+            frame: { x_mm: 3, y_mm: 29, width_mm: 25, height_mm: 6 },
+            source: { type: "binding", binding: "badge.role_label" },
+            style: {
+              font_size_mm: 3.1,
+              min_font_size_mm: 2.2,
+              font_weight: 800,
+              text_align: "center",
+              border_radius_mm: 0.8,
+              padding_mm: 0.8,
+              ...roleStyle,
+            },
+          },
+          {
+            id: "scancode",
+            kind: "qr",
+            frame: { x_mm: 70, y_mm: 4, width_mm: 17, height_mm: 30 },
+            binding: "order_product.scancode",
+          },
+        ],
+      },
+      compact: {
+        media: { long_edge_mm: 40, short_edge_mm: 30 },
+        elements: [
+          {
+            id: "brand",
+            kind: "text",
+            frame: { x_mm: 2, y_mm: 2, width_mm: 25, height_mm: 3 },
+            source: { type: "literal", value: "ROSA" },
+            style: {
+              font_size_mm: 1.8,
+              min_font_size_mm: 1.4,
+              font_weight: 800,
+              vertical_align: "top",
+            },
+          },
+          {
+            id: "name",
+            kind: "text",
+            frame: { x_mm: 2, y_mm: 7, width_mm: 25, height_mm: 6 },
+            source: { type: "binding", binding: "ticket.name" },
+            style: { font_size_mm: 4, min_font_size_mm: 2.2, font_weight: 900 },
+          },
+          {
+            id: "organization",
+            kind: "text",
+            frame: { x_mm: 2, y_mm: 14, width_mm: 25, height_mm: 5 },
+            source: {
+              type: "binding",
+              binding: "ticket.organization",
+              fallback: "소속 없음",
+            },
+            style: {
+              font_size_mm: 2.4,
+              min_font_size_mm: 1.6,
+              font_weight: 400,
+              vertical_align: "top",
+            },
+          },
+          {
+            id: "role",
+            kind: "text",
+            frame: { x_mm: 2, y_mm: 22, width_mm: 16, height_mm: 5 },
+            source: { type: "binding", binding: "badge.role_label" },
+            style: {
+              font_size_mm: 2.5,
+              min_font_size_mm: 1.8,
+              font_weight: 800,
+              text_align: "center",
+              border_radius_mm: 0.6,
+              padding_mm: 0.6,
+              ...roleStyle,
+            },
+          },
+          {
+            id: "scancode",
+            kind: "qr",
+            frame: { x_mm: 29, y_mm: 6, width_mm: 9, height_mm: 18 },
+            binding: "order_product.scancode",
+          },
+        ],
+      },
+    },
+  });
+
+  return {
+    template_id: template.template_id,
+    tag_code: template.tag_code,
+    name: template.name,
+    role_label: template.role_label,
+    priority: template.priority,
+    document,
+  };
+};
+
+export const BUILT_IN_BADGE_TEMPLATES: readonly BuiltInBadgeTemplate[] = [
+  createBadgeTemplate({
     template_id: "registration.badge.speaker",
     tag_code: "speaker",
     name: "발표자 기본 템플릿",
     role_label: "발표자",
     priority: 300,
     variant: "solid",
-  },
-  {
+  }),
+  createBadgeTemplate({
     template_id: "registration.badge.volunteer",
     tag_code: "volunteer",
     name: "자원봉사자 기본 템플릿",
     role_label: "자원봉사자",
     priority: 200,
     variant: "outlined",
-  },
-  {
+  }),
+  createBadgeTemplate({
     template_id: "registration.badge.attendee",
     tag_code: "attendee",
     name: "참가자 기본 템플릿",
     role_label: "참가자",
     priority: 100,
     variant: "plain",
-  },
-] as const;
-
-export type BuiltInBadgeTemplate = typeof BUILT_IN_BADGE_TEMPLATES[number];
+  }),
+];
 
 export const DEFAULT_BADGE_TEMPLATE = BUILT_IN_BADGE_TEMPLATES[2];
 
