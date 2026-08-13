@@ -42,13 +42,32 @@ export type ProbeResult = {
 /** 프린터가 스스로 알아낼 수 없어 호출자가 줘야 한다. */
 export type LabelSpec = { widthMm: number; heightMm: number; gapMm?: number };
 
+export type PrinterProfileSettings = Readonly<Record<string, number>>;
+
+export type PrinterSettingField = {
+  id: string;
+  label: string;
+  unit: string;
+  defaultValue: number;
+  min: number;
+  max?: number;
+  step: number;
+  integer?: boolean;
+  options?: readonly number[];
+};
+
+export type CanvasSizeRequest = {
+  probe?: ProbeResult;
+  settings: PrinterProfileSettings;
+};
+
+export type CanvasSize = { width: number; height?: number };
+
 export type JobRequest = {
   image: RcptImage;
   copies: number;
   probe?: ProbeResult;
-  label?: LabelSpec;
-  /** 생략하면 미디어 표에서 가져온다. */
-  rightMarginDots?: number;
+  settings: PrinterProfileSettings;
 };
 
 export type PrinterAction = {
@@ -75,14 +94,14 @@ export type PrinterProfile = {
   id: string;
   name: string;
   links: PrinterLinks;
-  /** 라벨 크기를 장치에서 읽는 기종은 UI에서 수동 변경을 막는다. */
-  labelSizeSource: "device" | "manual";
+  mediaSizeSource: "device" | "settings";
+  settings: readonly PrinterSettingField[];
   actions?: PrinterAction[];
   /** 없으면 보낸 것까지만 보고한다. */
   completionProbe?: CompletionProbe;
-  /** 없으면 캔버스 폭이 라벨 크기로 정해진다. */
-  headDots?: number;
   dotsPerMm: number;
+  canvasSize(request: CanvasSizeRequest): CanvasSize;
+  validateSettings?(settings: PrinterProfileSettings): void;
   probe?(io: ByteStream): Promise<ProbeResult>;
   buildJob(request: JobRequest): Uint8Array;
 };

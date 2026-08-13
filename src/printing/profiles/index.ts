@@ -6,9 +6,19 @@ import type { DeviceIdentity, DiscoveryFilter, LinkSpec, PrinterProfile } from "
 export * from "./types";
 export { brotherGeometry, BROTHER_QL_820NWB, type BrotherLabelGeometry } from "./brother";
 export {
+  LABEL_GAP_MM_SETTING,
+  LABEL_HEIGHT_MM_SETTING,
+  LABEL_WIDTH_MM_SETTING,
   MAX_PRINT_COPIES,
-  maxImageWidth,
+  PRINT_PADDING_MM_SETTING,
+  PRINT_PADDING_SETTING_FIELD,
+  RIGHT_MARGIN_DOTS_SETTING,
+  labelSpecFromSettings,
+  manualLabelSettingFields,
+  printerSetting,
+  resolvePrinterSettings,
   validateLabelSpec,
+  validateManualLabelSettings,
   validatePrintCopies,
   validateRightMarginDots,
 } from "./common";

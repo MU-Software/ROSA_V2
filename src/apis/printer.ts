@@ -4,14 +4,17 @@ import { createPrinterTransports } from "../adapters/printer";
 import {
   knownPrinterFilter,
   findProfile,
-  maxImageWidth,
-  validateLabelSpec,
+  LABEL_GAP_MM_SETTING,
+  LABEL_HEIGHT_MM_SETTING,
+  LABEL_WIDTH_MM_SETTING,
+  PRINT_PADDING_MM_SETTING,
+  RIGHT_MARGIN_DOTS_SETTING,
+  resolvePrinterSettings,
   validatePrintCopies,
-  validateRightMarginDots,
   type CompletionProbe,
-  type LabelSpec,
   type PrinterAction,
   type PrinterProfile,
+  type PrinterProfileSettings,
   type ProbeResult,
 } from "../printing/profiles";
 import { RcptImage } from "../printing/receipet";
@@ -22,21 +25,11 @@ import {
 import { toMessage } from "../utils/bytes";
 
 const SETTINGS_STORAGE_KEY = "rosa.printer.settings";
-const SETTINGS_STORAGE_VERSION = 4;
+const SETTINGS_STORAGE_VERSION = 5;
 const REGISTRATION_STORAGE_KEY = "rosa.printer.registrations";
 const REGISTRATION_STORAGE_VERSION = 1;
 
-export const PRINT_PADDING_MM_OPTIONS = [0.5, 1, 1.5, 2] as const;
-export const DEFAULT_PRINT_PADDING_MM = 1;
-
-/** 프린터가 스스로 알려주지 못해 사용자가 정해야 하는 값들. 물리 장치 단위로 저장한다. */
-export type PrinterSettings = {
-  label?: LabelSpec;
-  /** 라벨 가장자리부터 실제 이미지까지 확보할 안전 여백. */
-  paddingMm?: number;
-  /** 눈금자로 보정한 값. */
-  rightMarginDots?: number;
-};
+export type PrinterSettings = PrinterProfileSettings;
 
 type StoredPrinterSettings = {
   version: typeof SETTINGS_STORAGE_VERSION;
@@ -46,7 +39,18 @@ type StoredPrinterSettings = {
   printRoutes?: Partial<Record<RegistrationPrintKind, string>>;
 };
 
-type LegacyStoredPrinterSettings = Omit<StoredPrinterSettings, "version"> & { version: 2 | 3 };
+type LegacyPrinterSettings = {
+  label?: { widthMm: number; heightMm: number; gapMm?: number };
+  paddingMm?: number;
+  rightMarginDots?: number;
+};
+
+type LegacyStoredPrinterSettings = {
+  version: 2 | 3 | 4;
+  devices?: Record<string, LegacyPrinterSettings>;
+  legacyProfiles?: Record<string, LegacyPrinterSettings>;
+  printRoutes?: Partial<Record<RegistrationPrintKind, string>>;
+};
 
 export type PrinterDevice = DiscoveredDevice & {
   profile?: PrinterProfile;
@@ -111,69 +115,13 @@ const EMPTY_SETTINGS: PrinterSettings = Object.freeze({});
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
 
-const optionalFiniteNumber = (value: unknown): value is number | undefined =>
-  value === undefined || (typeof value === "number" && Number.isFinite(value));
-
-const validStoredLabel = (label: LabelSpec): boolean =>
-  label.widthMm > 0 && label.heightMm > 0 && (label.gapMm === undefined || label.gapMm >= 0);
-
-const validatePrinterSettings = (
-  settings: PrinterSettings,
-  profile: PrinterProfile | undefined,
-  deviceName: string,
-): void => {
-  if (settings.label) {
-    validateLabelSpec(settings.label);
-    const maxWidthMm = profile?.headDots === undefined
-      ? undefined
-      : profile.headDots / profile.dotsPerMm;
-    if (maxWidthMm !== undefined && settings.label.widthMm > maxWidthMm) {
-      throw new Error(
-        `${profile?.name ?? deviceName}의 라벨 가로는 ${maxWidthMm} mm를 넘을 수 없습니다.`,
-      );
-    }
-  }
-  if (settings.paddingMm !== undefined &&
-    (!Number.isFinite(settings.paddingMm) || settings.paddingMm < 0)) {
-    throw new Error(`인쇄 패딩은 0 이상의 유한한 값이어야 합니다: ${settings.paddingMm}`);
-  }
-  if (settings.rightMarginDots !== undefined) {
-    validateRightMarginDots(settings.rightMarginDots);
-    if (profile?.headDots !== undefined && settings.rightMarginDots >= profile.headDots) {
-      throw new Error(`오른쪽 여백은 프린터 헤드 폭보다 작아야 합니다: ${settings.rightMarginDots}`);
-    }
-  }
-  if (settings.label && settings.paddingMm !== undefined &&
-    (settings.paddingMm * 2 >= settings.label.widthMm ||
-      settings.paddingMm * 2 >= settings.label.heightMm)) {
-    throw new Error("인쇄 패딩은 라벨 가로와 세로의 절반보다 작아야 합니다.");
-  }
-};
-
 const parsePrinterSettings = (value: unknown): PrinterSettings | undefined => {
   if (!isRecord(value)) return undefined;
-  if (!optionalFiniteNumber(value.rightMarginDots)) return undefined;
-  if (!optionalFiniteNumber(value.paddingMm)) return undefined;
-
-  let label: LabelSpec | undefined;
-  if (value.label !== undefined) {
-    if (!isRecord(value.label)) return undefined;
-    const { widthMm, heightMm, gapMm } = value.label;
-    if (!optionalFiniteNumber(widthMm) || !optionalFiniteNumber(heightMm) || !optionalFiniteNumber(gapMm)) return undefined;
-    if (widthMm === undefined || heightMm === undefined) return undefined;
-    label = { widthMm, heightMm, ...(gapMm === undefined ? {} : { gapMm }) };
-    if (!validStoredLabel(label)) return undefined;
+  const entries = Object.entries(value);
+  if (entries.some(([, setting]) => typeof setting !== "number" || !Number.isFinite(setting))) {
+    return undefined;
   }
-
-  if (value.paddingMm !== undefined && value.paddingMm < 0) return undefined;
-  if (value.rightMarginDots !== undefined &&
-    (!Number.isInteger(value.rightMarginDots) || value.rightMarginDots < 0)) return undefined;
-
-  return {
-    ...(label ? { label } : {}),
-    ...(value.paddingMm === undefined ? {} : { paddingMm: value.paddingMm }),
-    ...(value.rightMarginDots === undefined ? {} : { rightMarginDots: value.rightMarginDots }),
-  };
+  return Object.fromEntries(entries) as PrinterSettings;
 };
 
 const parseSettingsMap = (value: unknown): Record<string, PrinterSettings> => {
@@ -181,6 +129,40 @@ const parseSettingsMap = (value: unknown): Record<string, PrinterSettings> => {
   return Object.fromEntries(
     Object.entries(value).flatMap(([key, settings]) => {
       const parsed = parsePrinterSettings(settings);
+      return parsed ? [[key, parsed]] : [];
+    }),
+  );
+};
+
+const parseLegacyPrinterSettings = (value: unknown): PrinterSettings | undefined => {
+  if (!isRecord(value)) return undefined;
+  const settings: Record<string, number> = {};
+  if (typeof value.paddingMm === "number" && Number.isFinite(value.paddingMm)) {
+    settings[PRINT_PADDING_MM_SETTING] = value.paddingMm;
+  }
+  if (typeof value.rightMarginDots === "number" && Number.isFinite(value.rightMarginDots)) {
+    settings[RIGHT_MARGIN_DOTS_SETTING] = value.rightMarginDots;
+  }
+  if (isRecord(value.label)) {
+    const { widthMm, heightMm, gapMm } = value.label;
+    if (typeof widthMm === "number" && Number.isFinite(widthMm)) {
+      settings[LABEL_WIDTH_MM_SETTING] = widthMm;
+    }
+    if (typeof heightMm === "number" && Number.isFinite(heightMm)) {
+      settings[LABEL_HEIGHT_MM_SETTING] = heightMm;
+    }
+    if (typeof gapMm === "number" && Number.isFinite(gapMm)) {
+      settings[LABEL_GAP_MM_SETTING] = gapMm;
+    }
+  }
+  return settings;
+};
+
+const parseLegacySettingsMap = (value: unknown): Record<string, PrinterSettings> => {
+  if (!isRecord(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([key, settings]) => {
+      const parsed = parseLegacyPrinterSettings(settings);
       return parsed ? [[key, parsed]] : [];
     }),
   );
@@ -230,17 +212,20 @@ export class PrinterManager {
       const raw: unknown = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) ?? "{}");
       if (!isRecord(raw)) return;
       const stored = raw as Partial<StoredPrinterSettings | LegacyStoredPrinterSettings>;
-      if (stored.version === SETTINGS_STORAGE_VERSION || stored.version === 2 || stored.version === 3) {
+      if (stored.version === SETTINGS_STORAGE_VERSION) {
         this.settings = parseSettingsMap(stored.devices);
         this.legacyProfileSettings = parseSettingsMap(stored.legacyProfiles);
         this.printRoutes = parsePrintRoutes(stored.printRoutes);
-        // 이전 값에는 paddingMm이 없으며 기본 1 mm가 적용된다. 다음 저장부터 v4로 기록한다.
-        if (stored.version !== SETTINGS_STORAGE_VERSION) this.persistSettings();
+      } else if (stored.version === 2 || stored.version === 3 || stored.version === 4) {
+        this.settings = parseLegacySettingsMap(stored.devices);
+        this.legacyProfileSettings = parseLegacySettingsMap(stored.legacyProfiles);
+        this.printRoutes = parsePrintRoutes(stored.printRoutes);
+        this.persistSettings();
       } else if ("version" in stored) {
         console.warn(`지원하지 않는 프린터 설정 버전입니다: ${String(stored.version)}`);
       } else {
         // 이전 형식은 `{ [profileId]: settings }` 였다. 첫 장치별 수정 전까지 기본값으로 유지한다.
-        this.legacyProfileSettings = parseSettingsMap(raw);
+        this.legacyProfileSettings = parseLegacySettingsMap(raw);
       }
     } catch (err) {
       console.error("Failed to load printer settings:", err);
@@ -264,18 +249,25 @@ export class PrinterManager {
   getSettings(key: string): PrinterSettings {
     const device = this.devices.get(key);
     if (!device) return EMPTY_SETTINGS;
-    return this.settings[this.deviceStorageId(device)] ??
+    const stored = this.settings[this.deviceStorageId(device)] ??
       (device.profile ? this.legacyProfileSettings[device.profile.id] : undefined) ??
       EMPTY_SETTINGS;
+    if (!device.profile) return stored;
+    try {
+      return resolvePrinterSettings(device.profile, stored);
+    } catch (reason) {
+      console.warn(`잘못된 ${device.profile.name} 설정을 기본값으로 대체합니다`, reason);
+      return resolvePrinterSettings(device.profile, EMPTY_SETTINGS);
+    }
   }
 
   updateSettings(key: string, patch: PrinterSettings): void {
     const device = this.devices.get(key);
     if (!device) throw new Error(`프린터 "${key}" 가 목록에 없습니다`);
+    if (!device.profile) throw new Error(`"${device.name}" 은 지원하는 프린터가 아닙니다`);
     const id = this.deviceStorageId(device);
     const settings = { ...this.getSettings(key), ...patch };
-    validatePrinterSettings(settings, device.profile, device.name);
-    this.settings[id] = settings;
+    this.settings[id] = resolvePrinterSettings(device.profile, settings);
     this.persistSettings();
     this.notifyChange();
   }
@@ -641,19 +633,13 @@ export class PrinterManager {
   private physicalImageSize(key: string): { width: number; height?: number } {
     const connection = this.requireConnection(key);
     const settings = this.getSettings(key);
-    const printable = connection.probe?.printable;
-
-    return {
-      width: printable?.widthDots ?? maxImageWidth(connection.profile, settings.label),
-      height:
-        printable?.lengthDots ||
-        (settings.label ? Math.floor(settings.label.heightMm * connection.profile.dotsPerMm) : undefined),
-    };
+    return connection.profile.canvasSize({ probe: connection.probe, settings });
   }
 
   private paddingDots(key: string): number {
     const connection = this.requireConnection(key);
-    const paddingMm = this.getSettings(key).paddingMm ?? DEFAULT_PRINT_PADDING_MM;
+    const paddingMm = this.getSettings(key)[PRINT_PADDING_MM_SETTING];
+    if (paddingMm === undefined) throw new Error(`프린터 "${key}" 의 인쇄 패딩 설정이 없습니다`);
     return Math.round(paddingMm * connection.profile.dotsPerMm);
   }
 
@@ -685,7 +671,7 @@ export class PrinterManager {
     const settings = this.getSettings(key);
     const copies = options.copies ?? 1;
     validatePrintCopies(copies);
-    validatePrinterSettings(settings, connection.profile, connection.profile.name);
+    resolvePrinterSettings(connection.profile, settings);
     const physical = this.physicalImageSize(key);
     const padding = this.paddingDots(key);
     const contentWidth = physical.width - padding * 2;
@@ -713,8 +699,7 @@ export class PrinterManager {
         image: padded,
         copies,
         probe: connection.probe,
-        label: settings.label,
-        rightMarginDots: settings.rightMarginDots,
+        settings,
       });
     } finally {
       padded.free();

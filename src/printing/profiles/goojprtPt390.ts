@@ -16,7 +16,13 @@ import {
   parseJxig,
   withCmdMode,
 } from "../pt390";
-import { repeat, validatePrintCopies } from "./common";
+import {
+  labelSpecFromSettings,
+  manualLabelSettingFields,
+  repeat,
+  validateManualLabelSettings,
+  validatePrintCopies,
+} from "./common";
 import type { PrinterProfile } from "./types";
 
 const PT390_MAX_DOTS = 576;
@@ -36,9 +42,17 @@ export const GOOJPRT_PT390: PrinterProfile = {
       pace: { bytes: 8192, pauseMs: 300 },
     },
   },
-  labelSizeSource: "manual",
-  headDots: PT390_MAX_DOTS,
+  mediaSizeSource: "settings",
+  settings: manualLabelSettingFields(PT390_MAX_DOTS / 8),
   dotsPerMm: 8,
+  canvasSize({ settings }) {
+    const label = labelSpecFromSettings(settings);
+    return {
+      width: Math.floor(label.widthMm * this.dotsPerMm),
+      height: Math.floor(label.heightMm * this.dotsPerMm),
+    };
+  },
+  validateSettings: validateManualLabelSettings,
   completionProbe: { request: HEALTH_REQUEST, length: HEALTH_LENGTH, intervalMs: 400 },
   actions: [
     {

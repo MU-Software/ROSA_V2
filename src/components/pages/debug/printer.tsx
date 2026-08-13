@@ -1,14 +1,15 @@
-import { Alert, Box, Button, Card, Chip, CircularProgress, Stack, TextField, Typography } from "@mui/material";
+import { Alert, Box, Button, Card, Chip, CircularProgress, Stack, Typography } from "@mui/material";
 import { DebugCard } from "./card";
 import { hex, useRefreshable } from "./shared";
 import { Refresh } from "@mui/icons-material";
 import { TooltipIconButton } from "../../elements/buttons";
 import { canvasToRcptImage, toImageData } from "../../../printing/raster";
 import { defaultTestCardHeight, drawTestCard } from "../../../printing/testCard";
-import { printerManager, type PrinterDevice, type PrinterSettings } from "../../../apis/printer";
+import { printerManager, type PrinterDevice } from "../../../apis/printer";
 import { toMessage } from "../../../utils/bytes";
 import { useCallback, useRef, useState, type FC } from "react";
-import { usePrinterConnection, usePrinterDevices, usePrinterSettings, usePrinterState } from "../../../hooks/usePrinter";
+import { usePrinterConnection, usePrinterDevices, usePrinterState } from "../../../hooks/usePrinter";
+import { PrinterDeviceDialog } from "../../printer/printerDeviceDialog";
 
 const TRANSPORT_LABELS: Record<"usb" | "btspp" | "ble", string> = { usb: "USB", btspp: "BT SPP", ble: "BLE" };
 const STATUS_LABELS = {
@@ -20,54 +21,14 @@ const STATUS_LABELS = {
   faulted: "연결 끊김",
 } as const;
 
-const LabelSpecFields: FC<{
-  deviceKey: string;
-  settings: PrinterSettings;
-  onError: (message: string | null) => void;
-}> = ({ deviceKey, settings, onError }) => {
-  const label = settings.label ?? { widthMm: 50, heightMm: 30, gapMm: 2 };
-  const update = (field: keyof typeof label, value: string) => {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed) || (field === "gapMm" ? parsed < 0 : parsed <= 0)) return;
-    try {
-      printerManager.updateSettings(deviceKey, { label: { ...label, [field]: parsed } });
-      onError(null);
-    } catch (reason) {
-      onError(toMessage(reason));
-    }
-  };
-
-  return (
-    <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-      <Typography variant="body2" sx={{ minWidth: 64 }}>라벨</Typography>
-      {([
-        ["가로", "widthMm"],
-        ["세로", "heightMm"],
-        ["갭", "gapMm"],
-      ] as const).map(([labelText, field]) => (
-        <TextField
-          key={field}
-          size="small"
-          type="number"
-          label={`${labelText} (mm)`}
-          sx={{ width: 110 }}
-          value={label[field] ?? ""}
-          slotProps={{ htmlInput: { min: field === "gapMm" ? 0 : 0.1, step: 0.1 } }}
-          onChange={(event) => update(field, event.target.value)}
-        />
-      ))}
-    </Stack>
-  );
-};
-
 const PrinterRow: FC<{ device: PrinterDevice }> = ({ device }) => {
   const profile = device.profile;
   const connection = usePrinterConnection(device.key);
   const state = usePrinterState(device.key);
-  const settings = usePrinterSettings(device.key);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const previewRef = useRef<HTMLCanvasElement | null>(null);
 
   const run = (what: string, action: () => Promise<void>) => {
@@ -123,6 +84,7 @@ const PrinterRow: FC<{ device: PrinterDevice }> = ({ device }) => {
             label={STATUS_LABELS[state.status]}
           />
           <Box sx={{ flexGrow: 1 }} />
+          {profile && <Button size="small" onClick={() => setSettingsOpen(true)}>설정</Button>}
           {profile && (connection
             ? <Button size="small" disabled={state.status === "printing" || state.status === "disconnecting"} onClick={() => run("해제", () => printerManager.disconnect(device.key))}>연결 해제</Button>
             : <Button size="small" variant="outlined" disabled={state.status === "connecting" || state.status === "disconnecting"} onClick={() => run("연결", async () => { await printerManager.connect(device.key); })}>연결</Button>
@@ -163,10 +125,6 @@ const PrinterRow: FC<{ device: PrinterDevice }> = ({ device }) => {
               </>
             )}
 
-            {profile && profile.headDots === undefined && (
-              <LabelSpecFields deviceKey={device.key} settings={settings} onError={setError} />
-            )}
-
             <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", gap: 1 }}>
               <Button size="small" variant="contained" disabled={busy !== null} onClick={testPrint}>테스트 인쇄</Button>
               {profile?.probe && (
@@ -196,6 +154,11 @@ const PrinterRow: FC<{ device: PrinterDevice }> = ({ device }) => {
           </>
         )}
       </Stack>
+      <PrinterDeviceDialog
+        open={settingsOpen}
+        deviceKey={device.key}
+        onClose={() => setSettingsOpen(false)}
+      />
     </Card>
   );
 };

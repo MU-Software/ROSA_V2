@@ -1,6 +1,13 @@
 import * as RCPT from "@mu-software/receipet/constants";
 import { describeBrotherErrors, parseBrotherStatus } from "../receipet";
-import { repeat, validatePrintCopies, validateRightMarginDots } from "./common";
+import {
+  PRINT_PADDING_SETTING_FIELD,
+  RIGHT_MARGIN_DOTS_SETTING,
+  printerSetting,
+  repeat,
+  validatePrintCopies,
+  validateRightMarginDots,
+} from "./common";
 import type { BrotherMedia, PrinterProfile } from "./types";
 
 const BROTHER_HEAD_DOTS = 720;
@@ -57,9 +64,28 @@ export const BROTHER_QL_820NWB: PrinterProfile = {
   id: "brother-ql-820nwb",
   name: "Brother QL-820NWB",
   links: { usb: { matches: [{ vendorId: 0x04f9, productId: 0x209d }], chunkBytes: 16384 } },
-  labelSizeSource: "device",
-  headDots: BROTHER_HEAD_DOTS,
+  mediaSizeSource: "device",
+  settings: [
+    PRINT_PADDING_SETTING_FIELD,
+    {
+      id: RIGHT_MARGIN_DOTS_SETTING,
+      label: "오른쪽 여백",
+      unit: "dots",
+      defaultValue: BROTHER_DEFAULT_RIGHT_MARGIN_DOTS,
+      min: 0,
+      max: BROTHER_HEAD_DOTS - 1,
+      step: 1,
+      integer: true,
+    },
+  ],
   dotsPerMm: BROTHER_DOTS_PER_MM,
+  canvasSize({ probe }) {
+    if (!probe?.printable) throw new Error("Brother 미디어의 인쇄 영역을 확인할 수 없습니다");
+    return {
+      width: probe.printable.widthDots,
+      height: probe.printable.lengthDots || undefined,
+    };
+  },
   completionProbe: {
     request: RCPT.BROTHER_STATUS_REQUEST,
     length: RCPT.BROTHER_STATUS_LEN,
@@ -97,12 +123,12 @@ export const BROTHER_QL_820NWB: PrinterProfile = {
     };
   },
 
-  buildJob({ image, copies, probe, rightMarginDots }) {
+  buildJob({ image, copies, probe, settings }) {
     validatePrintCopies(copies);
     const media = probe?.media;
     if (!media) throw new Error("Brother 는 인쇄 전에 상태 조회로 미디어를 확인해야 합니다");
 
-    const rightMargin = rightMarginDots ?? brotherGeometry(media).rightMarginDots;
+    const rightMargin = printerSetting(settings, RIGHT_MARGIN_DOTS_SETTING);
     validateRightMarginDots(rightMargin);
     const offset = BROTHER_HEAD_DOTS - image.width - rightMargin;
     if (offset < 0) {

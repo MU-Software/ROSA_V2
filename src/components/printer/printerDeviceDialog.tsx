@@ -1,6 +1,7 @@
 import { Refresh } from "@mui/icons-material";
 import {
   Alert,
+  Box,
   Button,
   Chip,
   CircularProgress,
@@ -18,19 +19,17 @@ import {
 } from "@mui/material";
 import { useCallback, useEffect, useMemo, useState, type FC } from "react";
 import {
-  DEFAULT_PRINT_PADDING_MM,
-  PRINT_PADDING_MM_OPTIONS,
   printerManager,
   type PrinterDevice,
 } from "../../apis/printer";
 import { usePrintMutation } from "../../hooks/usePrintMutation";
 import {
-  usePrinterConnection,
   usePrinterDevices,
   usePrinterSettings,
   usePrinterState,
 } from "../../hooks/usePrinter";
 import { GOOJPRT_PT390 } from "../../printing/profiles";
+import type { PrinterSettingField } from "../../printing/profiles";
 import { canvasToRcptImage } from "../../printing/raster";
 import { defaultTestCardHeight, drawTestCard } from "../../printing/testCard";
 import { toMessage } from "../../utils/bytes";
@@ -52,12 +51,15 @@ const isSelectablePrinter = (device: PrinterDevice, mobile: boolean): boolean =>
   return !mobile || device.profile.id === GOOJPRT_PT390.id;
 };
 
-const parseMillimeters = (value: string, label: string, allowZero = false): number => {
-  if (!value.trim()) throw new Error(`${label} 값을 입력하세요.`);
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) throw new Error(`${label} 값이 올바르지 않습니다.`);
-  if (allowZero ? parsed < 0 : parsed <= 0) {
-    throw new Error(`${label} 값은 ${allowZero ? "0 이상" : "0보다 크게"} 입력하세요.`);
+const parseSettingValue = (field: PrinterSettingField, value: string | number): number => {
+  const text = String(value).trim();
+  if (!text) throw new Error(`${field.label} 값을 입력하세요.`);
+  const parsed = Number(text);
+  if (!Number.isFinite(parsed) || parsed < field.min ||
+    (field.max !== undefined && parsed > field.max) ||
+    (field.integer && !Number.isInteger(parsed)) ||
+    (field.options && !field.options.includes(parsed))) {
+    throw new Error(`${field.label} 값이 허용 범위를 벗어났습니다.`);
   }
   return parsed;
 };
@@ -68,16 +70,11 @@ type SettingsContentProps = {
 };
 
 const PrinterSettingsContent: FC<SettingsContentProps> = ({ device, onClose }) => {
-  const connection = usePrinterConnection(device.key);
   const state = usePrinterState(device.key);
   const stored = usePrinterSettings(device.key);
-  const readableMedia = connection?.probe?.media;
-  const labelReadOnly = device.profile?.labelSizeSource === "device";
-  // 숫자로 즉시 바꾸면 빈 입력이 0이 되어 모바일에서 기존 값을 지울 수 없다.
-  const [widthMm, setWidthMm] = useState(String(stored.label?.widthMm ?? 50));
-  const [heightMm, setHeightMm] = useState(String(stored.label?.heightMm ?? 30));
-  const [gapMm, setGapMm] = useState(String(stored.label?.gapMm ?? 2));
-  const [paddingMm, setPaddingMm] = useState(stored.paddingMm ?? DEFAULT_PRINT_PADDING_MM);
+  const settingFields = device.profile?.settings ?? [];
+  const [settingValues, setSettingValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(settingFields.map((field) => [field.id, String(stored[field.id])])));
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -98,23 +95,13 @@ const PrinterSettingsContent: FC<SettingsContentProps> = ({ device, onClose }) =
     },
   });
 
-  const shownWidthMm = readableMedia ? String(readableMedia.widthMm) : widthMm;
-  const shownHeightMm = readableMedia ? String(readableMedia.lengthMm) : heightMm;
-  const shownGapMm = readableMedia ? "0" : gapMm;
-
   const saveSettings = () => {
-    printerManager.updateSettings(device.key, {
-      paddingMm,
-      ...(labelReadOnly
-        ? {}
-        : {
-            label: {
-              widthMm: parseMillimeters(widthMm, "가로"),
-              heightMm: parseMillimeters(heightMm, "세로"),
-              gapMm: parseMillimeters(gapMm, "갭", true),
-            },
-          }),
-    });
+    printerManager.updateSettings(device.key, Object.fromEntries(
+      settingFields.map((field) => [
+        field.id,
+        parseSettingValue(field, settingValues[field.id] ?? ""),
+      ]),
+    ));
   };
 
   const complete = () => {
@@ -172,50 +159,42 @@ const PrinterSettingsContent: FC<SettingsContentProps> = ({ device, onClose }) =
       {mutation.error && mutation.error.message !== connectionError && <Alert severity="error">{mutation.error.message}</Alert>}
       {state.status === "faulted" && state.error && <Alert severity="error">{state.error.message}</Alert>}
 
-      {labelReadOnly && (
+      {device.profile?.mediaSizeSource === "device" && (
         <Alert severity="info">이 프린터는 장착된 라벨 크기를 직접 읽으므로 임의로 변경할 수 없습니다.</Alert>
       )}
-      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-        <TextField
-          size="small"
-          type="number"
-          label="가로 (mm)"
-          value={shownWidthMm}
-          disabled={labelReadOnly}
-          slotProps={{ htmlInput: { min: 0.1, step: 0.1 } }}
-          onChange={(event) => setWidthMm(event.target.value)}
-        />
-        <TextField
-          size="small"
-          type="number"
-          label="세로 (mm)"
-          value={shownHeightMm}
-          disabled={labelReadOnly}
-          slotProps={{ htmlInput: { min: 0.1, step: 0.1 } }}
-          onChange={(event) => setHeightMm(event.target.value)}
-        />
-        <TextField
-          size="small"
-          type="number"
-          label="갭 (mm)"
-          value={shownGapMm}
-          disabled={labelReadOnly}
-          slotProps={{ htmlInput: { min: 0, step: 0.1 } }}
-          onChange={(event) => setGapMm(event.target.value)}
-        />
-      </Stack>
-      <TextField
-        select
-        size="small"
-        label="인쇄 패딩"
-        value={paddingMm}
-        onChange={(event) => setPaddingMm(Number(event.target.value))}
-        helperText="이미지는 라벨의 상하좌우 가장자리에서 선택한 거리만큼 안쪽에 배치됩니다."
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+          gap: 1,
+        }}
       >
-        {PRINT_PADDING_MM_OPTIONS.map((value) => (
-          <MenuItem key={value} value={value}>{value} mm</MenuItem>
+        {settingFields.map((field) => (
+          <TextField
+            key={field.id}
+            select={field.options !== undefined}
+            size="small"
+            type={field.options ? undefined : "number"}
+            label={`${field.label} (${field.unit})`}
+            value={settingValues[field.id] ?? ""}
+            slotProps={{
+              htmlInput: field.options ? undefined : {
+                min: field.min,
+                max: field.max,
+                step: field.step,
+              },
+            }}
+            onChange={(event) => setSettingValues((current) => ({
+              ...current,
+              [field.id]: String(event.target.value),
+            }))}
+          >
+            {field.options?.map((value) => (
+              <MenuItem key={value} value={value}>{value} {field.unit}</MenuItem>
+            ))}
+          </TextField>
         ))}
-      </TextField>
+      </Box>
 
       <Button
         variant="contained"
@@ -225,7 +204,7 @@ const PrinterSettingsContent: FC<SettingsContentProps> = ({ device, onClose }) =
         {mutation.isPending ? "테스트 인쇄 중…" : "테스트 인쇄"}
       </Button>
       {notice && <Alert severity="success" onClose={() => setNotice(null)}>{notice}</Alert>}
-      <Button onClick={complete}>{labelReadOnly ? "완료" : "설정 저장"}</Button>
+      <Button onClick={complete}>설정 저장</Button>
     </Stack>
   );
 };

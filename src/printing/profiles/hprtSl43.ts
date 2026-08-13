@@ -1,6 +1,12 @@
 import { concatBytes as concat } from "../../utils/bytes";
 import { ASB_LENGTH, ASB_REQUEST, HEALTH_LENGTH, HEALTH_REQUEST } from "../pt390";
-import { ascii, validateLabelSpec, validatePrintCopies } from "./common";
+import {
+  ascii,
+  labelSpecFromSettings,
+  manualLabelSettingFields,
+  validateManualLabelSettings,
+  validatePrintCopies,
+} from "./common";
 import type { PrinterProfile } from "./types";
 
 const BITMAP_CHUNK_ROWS = 64;
@@ -9,8 +15,17 @@ export const HPRT_SL43: PrinterProfile = {
   id: "hprt-sl43",
   name: "HPRT SL43",
   links: { usb: { matches: [{ vendorId: 0x2aaf, productId: 0x9006 }], chunkBytes: 4096 } },
-  labelSizeSource: "manual",
+  mediaSizeSource: "settings",
+  settings: manualLabelSettingFields(),
   dotsPerMm: 8,
+  canvasSize({ settings }) {
+    const label = labelSpecFromSettings(settings);
+    return {
+      width: Math.floor(label.widthMm * this.dotsPerMm),
+      height: Math.floor(label.heightMm * this.dotsPerMm),
+    };
+  },
+  validateSettings: validateManualLabelSettings,
   actions: [
     {
       id: "probe-status-commands",
@@ -39,9 +54,8 @@ export const HPRT_SL43: PrinterProfile = {
       },
     },
   ],
-  buildJob({ image, copies, label }) {
-    if (!label) throw new Error("SL43 은 라벨 크기를 지정해야 합니다");
-    validateLabelSpec(label);
+  buildJob({ image, copies, settings }) {
+    const label = labelSpecFromSettings(settings);
     validatePrintCopies(copies);
     const preamble = ascii(
       "INITIALPRINTER\r\n" +
