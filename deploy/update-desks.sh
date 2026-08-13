@@ -17,6 +17,8 @@ NAME=$(basename "$DEB")
 for host in "$@"; do
   printf '\n== %s\n' "$host"
   scp -q "$DEB" "$host:/tmp/$NAME"
-  ssh "$host" "sudo apt-get install -y /tmp/$NAME && rm -f /tmp/$NAME && systemctl --user restart rosa.service"
+  # 핫픽스는 버전이 그대로일 수 있다. apt 는 같은 버전이면 아무것도 하지 않으므로
+  # dpkg 로 덮어쓰고, 의존성이 새로 생겼을 때만 apt 가 뒤를 채운다.
+  ssh "$host" "sudo dpkg -i /tmp/$NAME || sudo apt-get -f install -y; rm -f /tmp/$NAME; systemctl --user restart rosa.service"
   echo "완료"
 done
