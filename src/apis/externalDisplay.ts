@@ -1,6 +1,6 @@
 import { WebviewWindow, getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { availableMonitors, currentMonitor, type Monitor } from "@tauri-apps/api/window";
-import { isTauri } from "../utils/platform";
+import { isLinux, isTauri } from "../utils/platform";
 
 export const EXTERNAL_DISPLAY_WINDOW_LABEL = "external-display";
 export const EXTERNAL_DISPLAY_PATH = "/display";
@@ -16,11 +16,15 @@ export const isExternalDisplayWindow = (): boolean => {
   }
 };
 
+/** 이름은 비어 있는 출력이 있어 위치로 가른다. 배치가 겹치는 출력은 없다. */
 const pickTargetMonitor = async (): Promise<Monitor | null> => {
   const monitors = await availableMonitors();
   if (monitors.length === 0) return null;
   const current = await currentMonitor();
-  return monitors.find((monitor) => monitor.name !== current?.name) ?? monitors[0];
+  if (!current) return monitors[0];
+  return monitors.find((monitor) =>
+    monitor.position.x !== current.position.x || monitor.position.y !== current.position.y
+  ) ?? monitors[0];
 };
 
 /** 창 옵션은 논리 좌표, 모니터 값은 물리 픽셀이다. */
@@ -44,12 +48,15 @@ export const openExternalDisplay = async (): Promise<void> => {
     return;
   }
 
-  const monitor = await pickTargetMonitor();
+  // Wayland 는 클라이언트가 창 위치를 정하지 못하고, 맵될 때 이미 전체화면이면 컴포지터의
+  // 배치 규칙도 거부된다. 리눅스에서는 배치와 전체화면을 모두 컴포지터에 맡긴다.
+  const placeHere = !isLinux();
+  const monitor = placeHere ? await pickTargetMonitor() : null;
   new WebviewWindow(EXTERNAL_DISPLAY_WINDOW_LABEL, {
     url: "index.html",
     title: "ROSA 외부 화면",
     decorations: false,
-    fullscreen: true,
+    fullscreen: placeHere,
     ...(monitor ? windowBoundsOf(monitor) : {}),
   });
 };
