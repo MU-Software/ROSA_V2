@@ -77,6 +77,14 @@ export type RegistrationDeskStatistics = {
   waiting_count: number;
 };
 
+export type RegistrationDeskSession = {
+  id: number;
+  unique_id: string;
+  username: string;
+  nickname: string | null;
+  email: string;
+};
+
 export type RegistrationDeskOrderProduct = OrderProductRelation & {
   short_id: string;
   order: Pick<Order, "id" | "name" | "current_status" | "first_paid_at">;

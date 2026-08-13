@@ -2,6 +2,8 @@ import { z } from "zod";
 import {
   OPTION_PLACEHOLDER_MODES,
   ORDER_PRODUCT_STATUSES,
+  PAYMENT_HISTORY_STATUSES,
+  type Order,
   type OrderProductRelation,
 } from "../domain";
 
@@ -61,3 +63,32 @@ export const orderProductRelationSchema = z.object({
   not_refundable_reason: z.string().nullable(),
   ticket_info: ticketInfoSchema.nullable(),
 }) satisfies z.ZodType<OrderProductRelation>;
+
+export const orderSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  first_paid_price: z.number(),
+  first_paid_at: z.string().nullable(),
+  current_paid_price: z.number(),
+  current_status: z.enum(PAYMENT_HISTORY_STATUSES),
+  payment_histories: z.array(z.object({
+    status: z.enum(PAYMENT_HISTORY_STATUSES),
+    price: z.number(),
+    created_at: z.string(),
+  })),
+  products: z.array(orderProductRelationSchema),
+  user: z.object({
+    id: z.number(),
+    username: z.string(),
+    email: z.string(),
+    unique_id: z.string(),
+  }),
+  customer_info: z.object({
+    name: z.string(),
+    phone: z.string(),
+    email: z.string(),
+    organization: z.string().nullable(),
+  }).nullable(),
+  not_fully_refundable_reason: z.string().nullable(),
+  created_at: z.string(),
+}) satisfies z.ZodType<Order>;

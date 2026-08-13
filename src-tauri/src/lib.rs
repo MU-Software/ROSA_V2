@@ -8,7 +8,9 @@ mod usb;
 pub fn run() {
     #[allow(unused_mut)]
     let mut builder =
-        tauri::Builder::default().plugin(tauri_plugin_log::Builder::default().build());
+        tauri::Builder::default()
+            .plugin(tauri_plugin_log::Builder::default().build())
+            .plugin(tauri_plugin_http::init());
 
     #[cfg(not(target_os = "ios"))]
     {
