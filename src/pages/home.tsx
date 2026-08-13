@@ -5,6 +5,7 @@ import {
   CheckCircleOutlined,
   DesktopWindowsOutlined,
   DesignServicesOutlined,
+  DnsOutlined,
   LockOutlined,
   MenuOutlined,
   PauseCircleOutlined,
@@ -119,7 +120,10 @@ const REGISTRATION_STATE_PRESENTATION: Record<
   },
 };
 
-export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gateway }) => {
+export const HomePage: FC<{
+  gateway: RegistrationDeskGateway | null;
+  onChangeServer: () => void;
+}> = ({ gateway, onChangeServer }) => {
   const {
     active_order_product_scancode: activeOrderProductScancode,
     automatic_registration_enabled: isAutomaticRegistrationEnabled,
@@ -473,6 +477,17 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
         <MenuItem component={Link} to="/templates" onClick={() => setMenuAnchor(null)}>
           <ListItemIcon><DesignServicesOutlined fontSize="small" /></ListItemIcon>
           <ListItemText>명찰 템플릿</ListItemText>
+        </MenuItem>
+        <Divider />
+        <MenuItem
+          disabled={registrationState !== "closed"}
+          onClick={() => {
+            setMenuAnchor(null);
+            onChangeServer();
+          }}
+        >
+          <ListItemIcon><DnsOutlined fontSize="small" /></ListItemIcon>
+          <ListItemText>서버 변경</ListItemText>
         </MenuItem>
       </Menu>
 
