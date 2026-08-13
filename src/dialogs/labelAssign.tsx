@@ -105,7 +105,7 @@ export const LabelAssignDialog: FC<Props> = ({ dialogKey, currentDialogKey, devi
         {status === "probing" && (
           <Stack spacing={1} sx={{ alignItems: "center", py: 2 }}>
             <CircularProgress size={28} />
-            <Typography variant="body1">UUID QR 코드를 스캔해 주세요.</Typography>
+            <Typography variant="body1">주문상품 QR 또는 UUID QR 코드를 스캔해 주세요.</Typography>
             <Typography variant="caption" color="text.secondary">
               통신 속도 {attempt ?? "-"} 시도 중 · 인식되지 않으면 다음 속도로 넘어갑니다
             </Typography>
@@ -114,7 +114,7 @@ export const LabelAssignDialog: FC<Props> = ({ dialogKey, currentDialogKey, devi
 
         {status === "failed" && (
           <Alert severity="warning">
-            모든 통신 속도에서 UUID 를 인식하지 못했습니다. 스캐너 설정이나 QR 값을 확인한 뒤 다시 시도하세요.
+            모든 통신 속도에서 QR 값을 인식하지 못했습니다. 스캐너 설정이나 QR 값을 확인한 뒤 다시 시도하세요.
           </Alert>
         )}
 
@@ -123,7 +123,7 @@ export const LabelAssignDialog: FC<Props> = ({ dialogKey, currentDialogKey, devi
             <Stack spacing={0.5}>
               <span><strong>{label}</strong> 할당 완료</span>
               <span>통신 속도: {result.baudRate}</span>
-              <span>인식된 값: <code>{result.match.uuid}</code></span>
+              <span>인식된 값: <code>{result.match.value}</code></span>
               <span>접두어: <code>{escape(result.match.prefix)}</code> · 종결 문자: <code>{escape(result.match.suffix)}</code></span>
             </Stack>
           </Alert>

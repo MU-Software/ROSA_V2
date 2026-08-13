@@ -242,7 +242,8 @@ const SerialDeviceSetupDialogContent: FC<Omit<Props, "open">> = ({ targetKey, on
                   </Box>
                 )}
                 <Alert severity="info">
-                  시작 후 UUID 형식의 QR 코드를 리더로 스캔하세요. 통신 속도와 입력 앞뒤 문자를 자동으로 확인합니다.
+                  시작 후 주문상품 QR 또는 UUID 형식의 QR 코드를 리더로 스캔하세요.
+                  통신 속도와 입력 앞뒤 문자를 자동으로 확인합니다.
                 </Alert>
                 <Button variant="contained" disabled={!label.trim() || !target} onClick={() => void beginSetup()}>
                   속도 및 입력 형식 확인
@@ -253,7 +254,7 @@ const SerialDeviceSetupDialogContent: FC<Omit<Props, "open">> = ({ targetKey, on
             {status === "probing" && (
               <Stack spacing={1} sx={{ alignItems: "center", py: 2 }}>
                 <CircularProgress size={28} />
-                <Typography>UUID QR 코드를 스캔해 주세요.</Typography>
+                <Typography>주문상품 QR 또는 UUID QR 코드를 스캔해 주세요.</Typography>
                 <Typography variant="caption" color="text.secondary">
                   통신 속도 {attempt ?? "-"} 시도 중
                 </Typography>
@@ -271,6 +272,7 @@ const SerialDeviceSetupDialogContent: FC<Omit<Props, "open">> = ({ targetKey, on
                 <Stack spacing={0.5}>
                   <span><strong>{label}</strong> 설정 완료</span>
                   <span>통신 속도: {result.baudRate}</span>
+                  <span>인식된 값: <code>{result.match.value}</code></span>
                   <span>접두어: <code>{escapeFraming(result.match.prefix)}</code></span>
                   <span>종결 문자: <code>{escapeFraming(result.match.suffix)}</code></span>
                 </Stack>

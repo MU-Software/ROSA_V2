@@ -2,6 +2,7 @@ import type { SerialAdapter } from "../adapters";
 import { toMessage } from "../utils/bytes";
 
 const UUID4_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i;
+const ORDER_PRODUCT_SCANCODE_PATTERN = /opr:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+/;
 
 /** 스캔 한 건이 끝났다고 판단하는 무음 구간. 데이터가 조각으로 도착할 수 있다. */
 const FRAME_IDLE_MS = 120;
@@ -10,22 +11,24 @@ const FRAME_IDLE_MS = 120;
 export const BAUD_CANDIDATES = [9600, 115200, 19200, 38400, 57600, 4800, 2400];
 
 export type ScanMatch = {
-  uuid: string;
+  value: string;
   /** 스캐너가 값 앞뒤에 덧붙이는 문자. 실제 운용 시 잘라내는 데 쓴다. */
   prefix: string;
   suffix: string;
 };
 
 /**
- * 속도가 틀리면 바이트가 깨지므로 UUID4 형식을 만족할 수 없다.
+ * 속도가 틀리면 바이트가 깨지므로 지원하는 QR 형식을 만족할 수 없다.
  * 따라서 이 판정의 통과 자체가 baud rate 가 맞다는 근거가 된다.
  */
-export const matchUuidScan = (data: Uint8Array): ScanMatch | null => {
+export const matchQrScan = (data: Uint8Array): ScanMatch | null => {
   const text = new TextDecoder().decode(data);
-  const found = UUID4_PATTERN.exec(text);
+  const orderProductScancode = ORDER_PRODUCT_SCANCODE_PATTERN.exec(text);
+  const uuid = UUID4_PATTERN.exec(text);
+  const found = orderProductScancode ?? uuid;
   if (!found) return null;
   return {
-    uuid: found[0],
+    value: found[0],
     prefix: text.slice(0, found.index),
     suffix: text.slice(found.index + found[0].length),
   };
@@ -94,7 +97,7 @@ export type BaudProbeResult = {
 };
 
 /**
- * 후보 속도를 하나씩 열어 스캔을 기다리고, UUID4 가 나오면 그 속도로 확정한다.
+ * 후보 속도를 하나씩 열어 스캔을 기다리고, 지원하는 QR 값이 나오면 그 속도로 확정한다.
  * 각 후보마다 스캔 한 번이 필요하므로 무응답 타임아웃은 두지 않는다.
  */
 export async function probeBaudRate(
@@ -112,7 +115,7 @@ export async function probeBaudRate(
     try {
       const frame = await readNextFrame(adapter.getReadable(key), signal);
       if (!frame) return null;
-      const match = matchUuidScan(frame);
+      const match = matchQrScan(frame);
       if (match) return { baudRate, match };
     } finally {
       await adapter.close(key);
