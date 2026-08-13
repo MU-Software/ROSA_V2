@@ -28,6 +28,7 @@ import {
 import type { RegistrationDeskGateway } from "../../../gateways";
 import {
   useModifyOrderProductMutation,
+  useRefundOrderProductMutation,
   useRegistrationDeskQueryClient,
 } from "../../../hooks/useRegistrationDesk";
 import { createRegistrationPrintQueue } from "../../../printing/queue";
@@ -93,6 +94,7 @@ export const OrderProductDetails: FC<{
   const [editingOptionId, setEditingOptionId] = useState<EntityId | null>(null);
   const [customResponse, setCustomResponse] = useState("");
   const [statusDialogOpen, setStatusDialogOpen] = useState(false);
+  const [refundDialogOpen, setRefundDialogOpen] = useState(false);
   const [ticketInfoEditorOpen, setTicketInfoEditorOpen] = useState(false);
   const [printPreviewOpen, setPrintPreviewOpen] = useState(false);
   const getUpdatedProduct = () => {
@@ -104,6 +106,7 @@ export const OrderProductDetails: FC<{
   const modifyOptionMutation = useModifyOrderProductMutation(gateway);
   const modifyStatusMutation = useModifyOrderProductMutation(gateway);
   const modifyTicketInfoMutation = useModifyOrderProductMutation(gateway);
+  const refundMutation = useRefundOrderProductMutation(gateway);
   const status = PRODUCT_STATUS_PRESENTATION[product.status];
   const ticket = product.ticket_info;
   const optionsEditable = product.status !== "used" && product.status !== "refunded";
@@ -112,6 +115,8 @@ export const OrderProductDetails: FC<{
   const printJobCount = createRegistrationPrintQueue(product).snapshot().length;
   const previewAvailable = printJobCount > 0 &&
     (product.status === "paid" || product.status === "used");
+  const refundable = variant === "page" && product.status === "paid" &&
+    product.not_refundable_reason === null;
   const nextStatus: OrderProductStatus | null = product.status === "paid"
     ? "used"
     : product.status === "used" ? "paid" : null;
@@ -122,7 +127,7 @@ export const OrderProductDetails: FC<{
     ? "사용 대기로 되돌리기"
     : nextStatus === "used" ? "사용 처리" : "사용 취소";
   const busy = disabled || modifyOptionMutation.isPending || modifyStatusMutation.isPending ||
-    modifyTicketInfoMutation.isPending || !!printAction?.pending;
+    modifyTicketInfoMutation.isPending || refundMutation.isPending || !!printAction?.pending;
 
   const beginOptionEdit = (optionId: EntityId, value: string | null) => {
     modifyOptionMutation.reset();
@@ -170,6 +175,24 @@ export const OrderProductDetails: FC<{
       return;
     }
     setStatusDialogOpen(false);
+  };
+
+  const closeRefundDialog = () => {
+    if (refundMutation.isPending) return;
+    refundMutation.reset();
+    setRefundDialogOpen(false);
+  };
+
+  const refund = async () => {
+    try {
+      await refundMutation.mutateAsync({
+        order_product_relation_id: product.id,
+      });
+      getUpdatedProduct();
+    } catch {
+      return;
+    }
+    setRefundDialogOpen(false);
   };
 
   return (
@@ -250,6 +273,37 @@ export const OrderProductDetails: FC<{
                   }}
                 >
                   {statusActionLabel}
+                </Button>
+              </Stack>
+            </Paper>
+          </Stack>
+        )}
+
+        {refundable && (
+          <Stack spacing={1}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>환불</Typography>
+            <Paper variant="outlined" sx={{ p: 2 }}>
+              <Stack
+                direction={{ xs: "column", sm: "row" }}
+                spacing={1.5}
+                sx={{ alignItems: { xs: "stretch", sm: "center" }, justifyContent: "space-between" }}
+              >
+                <Box>
+                  <Typography sx={{ fontWeight: 600 }}>주문상품 부분 환불</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    이 주문상품만 환불하고 같은 주문의 다른 상품은 유지합니다.
+                  </Typography>
+                </Box>
+                <Button
+                  variant="outlined"
+                  color="error"
+                  disabled={busy || editingOptionId !== null}
+                  onClick={() => {
+                    refundMutation.reset();
+                    setRefundDialogOpen(true);
+                  }}
+                >
+                  부분 환불
                 </Button>
               </Stack>
             </Paper>
@@ -433,6 +487,37 @@ export const OrderProductDetails: FC<{
             onClick={() => void changeStatus()}
           >
             {modifyStatusMutation.isPending ? "처리 중…" : statusActionLabel}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={refundDialogOpen} onClose={closeRefundDialog} fullWidth maxWidth="xs">
+        <DialogTitle>주문상품 부분 환불</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 0.5 }}>
+            <Alert severity="warning">
+              {product.product.name}만 환불합니다. 환불은 되돌릴 수 없습니다.
+            </Alert>
+            <Stack direction="row" sx={{ justifyContent: "space-between" }}>
+              <Typography variant="body2" color="text.secondary">환불 대상 금액</Typography>
+              <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                {formatPrice(product.price + product.donation_price)}
+              </Typography>
+            </Stack>
+            {refundMutation.error && (
+              <Alert severity="error">{refundMutation.error.message}</Alert>
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button disabled={refundMutation.isPending} onClick={closeRefundDialog}>취소</Button>
+          <Button
+            variant="contained"
+            color="error"
+            disabled={refundMutation.isPending}
+            onClick={() => void refund()}
+          >
+            {refundMutation.isPending ? "환불 중…" : "부분 환불"}
           </Button>
         </DialogActions>
       </Dialog>

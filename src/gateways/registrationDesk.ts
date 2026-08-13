@@ -48,12 +48,10 @@ export type ModifyOrderProductRequest = {
 
 export type RefundOrderRequest = {
   order_id: EntityId;
-  otp: string;
 };
 
 export type RefundOrderProductRequest = {
   order_product_relation_id: EntityId;
-  otp: string;
 };
 
 export type RegistrationDeskConfiguration = {

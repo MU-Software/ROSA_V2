@@ -210,13 +210,11 @@ export class HttpRegistrationDeskGateway implements RegistrationDeskGateway {
 
   refundOrder(request: RefundOrderRequest): Promise<void> {
     const url = this.routeUrl("refund_order", request.order_id);
-    url.search = queryString({ otp: request.otp });
     return this.request(url, null, { method: "DELETE" });
   }
 
   refundOrderProduct(request: RefundOrderProductRequest): Promise<void> {
     const url = this.routeUrl("refund_order_product", request.order_product_relation_id);
-    url.search = queryString({ otp: request.otp });
     return this.request(url, null, { method: "DELETE" });
   }
 

@@ -284,7 +284,7 @@ const OrderSearchQueryContent: FC<{
       refunding={refundMutation.isPending}
       refundError={refundMutation.error?.message ?? null}
       onClearRefundError={refundMutation.reset}
-      onRefund={(otp) => refundMutation.mutateAsync({ order_id: selectedOrder.id, otp })}
+      onRefund={() => refundMutation.mutateAsync({ order_id: selectedOrder.id })}
     />
   ) : (
     <OrderSearchResults
@@ -404,7 +404,7 @@ const OrderDetails: FC<{
   refunding: boolean;
   refundError: string | null;
   onClearRefundError: () => void;
-  onRefund: (otp: string) => Promise<void>;
+  onRefund: () => Promise<void>;
 }> = ({
   order,
   onBack,
@@ -415,14 +415,12 @@ const OrderDetails: FC<{
   onRefund,
 }) => {
   const [refundDialogOpen, setRefundDialogOpen] = useState(false);
-  const [refundOtp, setRefundOtp] = useState("");
   const payment = PAYMENT_STATUS_PRESENTATION[order.current_status];
   const customer = order.customer_info;
   const refundable = canFullyRefundOrder(order);
 
   const openRefundDialog = () => {
     onClearRefundError();
-    setRefundOtp("");
     setRefundDialogOpen(true);
   };
 
@@ -430,17 +428,15 @@ const OrderDetails: FC<{
     if (refunding) return;
     onClearRefundError();
     setRefundDialogOpen(false);
-    setRefundOtp("");
   };
 
   const refund = async () => {
     try {
-      await onRefund(refundOtp.trim());
+      await onRefund();
     } catch {
       return;
     }
     setRefundDialogOpen(false);
-    setRefundOtp("");
   };
 
   return (
@@ -555,19 +551,9 @@ const OrderDetails: FC<{
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 0.5 }}>
             <Typography variant="body2">
-              {order.name}의 모든 주문상품을 환불합니다. 계속하려면 관리자 OTP를 입력해주세요.
+              {order.name}의 모든 주문상품을 환불합니다. 환불은 되돌릴 수 없습니다.
             </Typography>
             {refundError && <Alert severity="error">{refundError}</Alert>}
-            <TextField
-              autoFocus
-              fullWidth
-              label="관리자 OTP"
-              type="password"
-              value={refundOtp}
-              disabled={refunding}
-              slotProps={{ htmlInput: { inputMode: "numeric", autoComplete: "one-time-code" } }}
-              onChange={(event) => setRefundOtp(event.target.value)}
-            />
           </Stack>
         </DialogContent>
         <DialogActions>
@@ -575,7 +561,7 @@ const OrderDetails: FC<{
           <Button
             variant="contained"
             color="error"
-            disabled={refunding || !refundOtp.trim()}
+            disabled={refunding}
             onClick={() => void refund()}
           >
             {refunding ? "환불 중…" : "전체 환불"}
