@@ -38,7 +38,9 @@
       "entitlements": "Entitlements.plist"
     },
     "iOS": {
-      "infoPlist": "Info.plist"
+      "infoPlist": "Info.plist",
+      "minimumSystemVersion": "15.0",
+      "developmentTeam": "NBM824WDPS"
     }
   }
 }
