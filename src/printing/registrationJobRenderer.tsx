@@ -64,10 +64,11 @@ const createRegistrationPrintJobDocument = async ({
     if (targets.length === 0) throw new Error("교환권에 출력할 유료 옵션이 없습니다");
     const longEdge = Math.max(width, height);
     const shortEdge = Math.min(width, height);
+    const layoutType = selectTemplateLayoutType(width, height);
     return (
       <ExchangeVoucher
-        product={product}
         targets={targets}
+        layoutType={layoutType}
         aspectRatio={`${longEdge} / ${shortEdge}`}
       />
     );

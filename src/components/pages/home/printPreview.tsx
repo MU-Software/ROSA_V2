@@ -144,6 +144,46 @@ const BadgePreview: FC<{ product: OrderProductRelation }> = ({ product }) => {
   );
 };
 
+const ExchangeVoucherPreview: FC<{
+  targets: ReturnType<typeof getPaidOptionExchangeTargets>;
+}> = ({ targets }) => {
+  const [layoutType, setLayoutType] = useState<TemplateLayoutType>("wide");
+
+  return (
+    <Stack spacing={1}>
+      <Stack
+        direction={{ xs: "column", sm: "row" }}
+        spacing={1}
+        sx={{ alignItems: { xs: "stretch", sm: "center" }, justifyContent: "space-between" }}
+      >
+        <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+          유료 옵션 교환권 1장 · {targets.length}개 항목
+        </Typography>
+        <ToggleButtonGroup
+          exclusive
+          size="small"
+          value={layoutType}
+          onChange={(_event, next: TemplateLayoutType | null) => {
+            if (next) setLayoutType(next);
+          }}
+        >
+          <ToggleButton value="wide">Wide</ToggleButton>
+          <ToggleButton value="compact">Compact</ToggleButton>
+        </ToggleButtonGroup>
+      </Stack>
+      <Box
+        sx={{
+          width: "100%",
+          maxWidth: layoutType === "wide" ? 720 : 480,
+          mx: "auto",
+        }}
+      >
+        <ExchangeVoucher targets={targets} layoutType={layoutType} />
+      </Box>
+    </Stack>
+  );
+};
+
 export const PrintPreviewDialog: FC<{
   product: OrderProductRelation;
   onClose: () => void;
@@ -165,16 +205,7 @@ export const PrintPreviewDialog: FC<{
           )}
           {hasBadge && <BadgePreview product={product} />}
           {hasBadge && exchangeTargets.length > 0 && <Divider />}
-          {exchangeTargets.length > 0 && (
-            <Stack spacing={2}>
-              <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                유료 옵션 교환권 1장 · {exchangeTargets.length}개 항목
-              </Typography>
-              <Box sx={{ width: "100%", maxWidth: 560, mx: "auto" }}>
-                <ExchangeVoucher product={product} targets={exchangeTargets} />
-              </Box>
-            </Stack>
-          )}
+          {exchangeTargets.length > 0 && <ExchangeVoucherPreview targets={exchangeTargets} />}
         </Stack>
       </DialogContent>
       <DialogActions>
