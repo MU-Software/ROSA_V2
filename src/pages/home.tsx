@@ -597,7 +597,17 @@ export const HomePage: FC<{
 const RegistrationConfigurationQuery: FC<{
   gateway: RegistrationDeskGateway;
 }> = ({ gateway }) => {
-  useRegistrationConfigurationQuery(gateway);
+  const { data } = useRegistrationConfigurationQuery(gateway);
+  const { event_logo_url: eventLogoUrl, setAppContext } = useAppContext();
+
+  useEffect(() => {
+    if (eventLogoUrl === data.event.logo_url) return;
+    setAppContext((current) => ({
+      ...current,
+      event_logo_url: data.event.logo_url,
+    }));
+  }, [data.event.logo_url, eventLogoUrl, setAppContext]);
+
   return null;
 };
 

@@ -8,6 +8,7 @@ export const APP_STATE_STORAGE_KEY = "rosa.app-state";
 export const persistedAppStateSchema = z.object({
   registration_state: z.enum(REGISTRATION_STATES),
   order_product_relation: orderProductRelationSchema.nullable(),
+  event_logo_url: z.string().nullable(),
   farewell_until: z.number().nullable(),
   automatic_registration_enabled: z.boolean(),
   active_order_product_scancode: z.string().nullable(),
@@ -19,6 +20,7 @@ export type PersistedAppState = z.infer<typeof persistedAppStateSchema>;
 export const DEFAULT_PERSISTED_APP_STATE: PersistedAppState = {
   registration_state: "closed",
   order_product_relation: null,
+  event_logo_url: null,
   farewell_until: null,
   automatic_registration_enabled: false,
   active_order_product_scancode: null,

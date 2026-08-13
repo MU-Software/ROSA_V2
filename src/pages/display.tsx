@@ -91,7 +91,7 @@ export const ExternalDisplayPage: FC = () => {
           placeItems: "center",
         }}
       >
-        <PythonKoreaLogo />
+        <EventLogo src={appState.event_logo_url} />
       </Box>
 
       <Stack
@@ -136,6 +136,27 @@ export const ExternalDisplayPage: FC = () => {
         )}
       </Stack>
     </Box>
+  );
+};
+
+const EventLogo: FC<{ src: string | null }> = ({ src }) => {
+  const [failedSource, setFailedSource] = useState<string | null>(null);
+
+  if (!src || failedSource === src) return <PythonKoreaLogo />;
+
+  return (
+    <Box
+      component="img"
+      src={src}
+      alt="행사 로고"
+      onError={() => setFailedSource(src)}
+      sx={{
+        display: "block",
+        width: "min(320px, 100%, 68vh)",
+        maxHeight: "100%",
+        objectFit: "contain",
+      }}
+    />
   );
 };
 
