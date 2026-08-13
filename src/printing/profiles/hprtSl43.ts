@@ -3,7 +3,7 @@ import { ASB_LENGTH, ASB_REQUEST, HEALTH_LENGTH, HEALTH_REQUEST } from "../pt390
 import { ascii } from "./common";
 import type { PrinterProfile } from "./types";
 
-const TSPL_STATUS_PRINTING = 0x20;
+const BITMAP_CHUNK_ROWS = 64;
 
 export const HPRT_SL43: PrinterProfile = {
   id: "hprt-sl43",
@@ -11,12 +11,6 @@ export const HPRT_SL43: PrinterProfile = {
   links: { usb: { matches: [{ vendorId: 0x2aaf, productId: 0x9006 }], chunkBytes: 4096 } },
   labelSizeSource: "manual",
   dotsPerMm: 8,
-  completionProbe: {
-    request: HEALTH_REQUEST,
-    length: HEALTH_LENGTH,
-    intervalMs: 250,
-    createJudge: () => (reply) => (reply[0] & TSPL_STATUS_PRINTING) === 0,
-  },
   actions: [
     {
       id: "probe-status-commands",
@@ -48,10 +42,17 @@ export const HPRT_SL43: PrinterProfile = {
   buildJob({ image, copies, label }) {
     if (!label) throw new Error("SL43 은 라벨 크기를 지정해야 합니다");
     const preamble = ascii(
-      `SIZE ${label.widthMm} mm,${label.heightMm} mm\r\n` +
+      "INITIALPRINTER\r\n" +
+        `SIZE ${label.widthMm} mm,${label.heightMm} mm\r\n` +
         `GAP ${label.gapMm ?? 0} mm,0 mm\r\n` +
-        "DIRECTION 0\r\n",
+        "OFFSET 0 mm\r\n" +
+        "DIRECTION 0\r\n" +
+        "DENSITY 7\r\n",
     );
-    return concat([preamble, image.encodeTspl({ x: 0, y: 0, copies })]);
+    return concat([
+      preamble,
+      image.encodeTspl({ x: 0, y: 0, chunkRows: BITMAP_CHUNK_ROWS, copies }),
+      ascii("END\r\n"),
+    ]);
   },
 };
