@@ -131,9 +131,8 @@ export const AppBootstrap: FC = () => {
   if (state.status === "login") {
     return (
       <LoginPage
-        serverOrigin={state.connection.resolved.server_origin}
-        discovery={state.connection.resolved.discovery}
-        checking={false}
+        connection={state.connection}
+        onLoggedIn={() => setState({ status: "ready", connection: state.connection })}
         onCheckSession={() => {
           setState({ status: "connecting" });
           void checkRosaSession(state.connection).then((connection) => {

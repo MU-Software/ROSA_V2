@@ -28,3 +28,9 @@ export const useCheckRosaSessionMutation = () => useMutation({
   mutationKey: ["mutation", "rosa", "check-session"],
   mutationFn: checkSession,
 });
+
+export const useRosaLoginMutation = (connection: RosaConnection) => useMutation({
+  mutationKey: ["mutation", "rosa", "login"],
+  mutationFn: ({ email, password }: { email: string; password: string }) =>
+    connection.gateway.login(email, password),
+});

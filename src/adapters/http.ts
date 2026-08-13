@@ -5,6 +5,12 @@ export type HttpTransport = {
   native: boolean;
 };
 
+export const cookieValue = (cookieHeader: string, name: string): string | undefined => {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const value = new RegExp(`(?:^|[,;]\\s*)${escaped}=([^;,]+)`).exec(cookieHeader)?.[1];
+  return value ? decodeURIComponent(value) : undefined;
+};
+
 let transportPromise: Promise<HttpTransport> | undefined;
 
 export const getHttpTransport = (): Promise<HttpTransport> => {

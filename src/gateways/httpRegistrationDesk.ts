@@ -1,5 +1,5 @@
-import type { z } from "zod";
-import type { HttpTransport } from "../adapters/http";
+import { z } from "zod";
+import { cookieValue, type HttpTransport } from "../adapters/http";
 import type { ResolvedRosaDiscovery } from "../apis/rosaDiscovery";
 import { orderSchema } from "../schemas/order";
 import {
@@ -34,16 +34,17 @@ const queryString = (params: Record<string, string | number | undefined>): strin
   return search.toString();
 };
 
-const cookieValue = (cookieHeader: string, name: string): string | undefined => {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(?:^|[,;]\\s*)${escaped}=([^;,]+)`).exec(cookieHeader)?.[1];
-};
-
 const errorDetail = (value: unknown): string | undefined => {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) return value.map(errorDetail).find(Boolean);
   if (value && typeof value === "object") {
-    for (const item of Object.values(value)) {
+    const values = value as Record<string, unknown>;
+    for (const key of ["detail", "message", "errors"]) {
+      const detail = errorDetail(values[key]);
+      if (detail) return detail;
+    }
+    for (const [key, item] of Object.entries(values)) {
+      if (["code", "param", "type", "status"].includes(key)) continue;
       const detail = errorDetail(item);
       if (detail) return detail;
     }
@@ -121,7 +122,12 @@ export class HttpRegistrationDeskGateway implements RegistrationDeskGateway {
     const isSafeMethod = ["GET", "HEAD", "OPTIONS"].includes(method);
     const csrfToken = isSafeMethod ? undefined : await this.ensureCsrfToken();
     const headers = new Headers(init.headers);
+    headers.set("Accept", "application/json");
+    headers.set("Accept-Language", "ko");
     if (init.body) headers.set("Content-Type", "application/json");
+    if (this.transport.native && !isSafeMethod) {
+      headers.set("Origin", this.resolved.server_origin);
+    }
     if (csrfToken) {
       headers.set(this.resolved.discovery.authentication.csrf.header_name, csrfToken);
     }
@@ -142,6 +148,19 @@ export class HttpRegistrationDeskGateway implements RegistrationDeskGateway {
       this.resolved.server_origin,
     );
     return this.request(url, registrationDeskSessionSchema);
+  }
+
+  async login(email: string, password: string): Promise<RegistrationDeskSession> {
+    const login = this.resolved.discovery.authentication.login;
+    const url = new URL(login.url, this.resolved.server_origin);
+    await this.request(url, z.unknown(), {
+      method: login.method,
+      body: JSON.stringify({
+        [login.identifier_field]: email,
+        [login.password_field]: password,
+      }),
+    });
+    return this.getSession();
   }
 
   searchOrders(params: SearchOrdersParams): Promise<PaginatedResponse<Order>> {
