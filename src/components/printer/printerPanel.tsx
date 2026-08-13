@@ -12,7 +12,9 @@ import {
   List,
   ListItem,
   ListItemText,
+  MenuItem,
   Stack,
+  TextField,
   Typography,
 } from "@mui/material";
 import { useEffect, useState, type FC } from "react";
@@ -23,6 +25,11 @@ import {
   type PrinterRestoreSkipped,
 } from "../../apis/printer";
 import { usePrinterState, useRegisteredPrinterDevices } from "../../hooks/usePrinter";
+import {
+  REGISTRATION_PRINT_KINDS,
+  REGISTRATION_PRINT_KIND_LABELS,
+  type RegistrationPrintKind,
+} from "../../printing/output";
 import { toMessage } from "../../utils/bytes";
 import { PrinterDeviceDialog } from "./printerDeviceDialog";
 
@@ -42,6 +49,9 @@ const RegisteredPrinterRow: FC<{
   onDelete: () => void;
 }> = ({ device, onSettings, onDelete }) => {
   const state = usePrinterState(device.key);
+  const printKinds = REGISTRATION_PRINT_KINDS.filter(
+    (kind) => printerManager.getPrintRoute(kind)?.key === device.key,
+  );
 
   return (
     <ListItem
@@ -63,11 +73,53 @@ const RegisteredPrinterRow: FC<{
               color={state.status === "ready" ? "success" : state.status === "faulted" ? "error" : "default"}
               label={STATUS_LABELS[state.status]}
             />
+            {printKinds.map((kind) => (
+              <Chip
+                key={kind}
+                size="small"
+                variant="outlined"
+                color="secondary"
+                label={`${REGISTRATION_PRINT_KIND_LABELS[kind]} 기본`}
+              />
+            ))}
           </Stack>
         }
         secondary={state.error?.message || [device.address, device.serialNumber && `SN:${device.serialNumber}`].filter(Boolean).join(" · ")}
       />
     </ListItem>
+  );
+};
+
+const PrintRouteSettings: FC<{ devices: readonly PrinterDevice[] }> = ({ devices }) => {
+  const updateRoute = (kind: RegistrationPrintKind, key: string) => {
+    printerManager.updatePrintRoute(kind, key || null);
+  };
+
+  return (
+    <Stack spacing={1}>
+      <Typography variant="subtitle2">자동 출력 프린터</Typography>
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+        {REGISTRATION_PRINT_KINDS.map((kind) => (
+          <TextField
+            key={kind}
+            select
+            fullWidth
+            size="small"
+            label={REGISTRATION_PRINT_KIND_LABELS[kind]}
+            value={printerManager.getPrintRoute(kind)?.key ?? ""}
+            onChange={(event) => updateRoute(kind, event.target.value)}
+          >
+            <MenuItem value="">등록 순서로 자동 선택</MenuItem>
+            {devices.map((device) => (
+              <MenuItem key={device.key} value={device.key}>{device.name}</MenuItem>
+            ))}
+          </TextField>
+        ))}
+      </Stack>
+      <Typography variant="caption" color="text.secondary">
+        지정한 프린터가 발견되지 않으면 현재 발견된 등록 프린터 중 첫 번째 프린터를 사용합니다.
+      </Typography>
+    </Stack>
   );
 };
 
@@ -150,6 +202,8 @@ export const PrinterPanel: FC = () => {
           <Typography variant="body2">등록된 프린터의 연결 상태를 확인하는 중입니다</Typography>
         </Stack>
       )}
+
+      {devices.length > 0 && <PrintRouteSettings devices={devices} />}
 
       <Typography variant="subtitle2">기기 목록 ({devices.length})</Typography>
       <List dense disablePadding>

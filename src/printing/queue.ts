@@ -5,6 +5,7 @@ import {
   findBuiltInBadgeTemplate,
   selectBadgeTemplate,
 } from "./templates";
+import type { RegistrationPrintKind } from "./output";
 export type { PrintJobExecution, PrintJobExecutionStatus } from "../schemas/printing";
 
 export const DEFAULT_BADGE_TEMPLATE_ID = DEFAULT_BADGE_TEMPLATE.template_id;
@@ -72,4 +73,10 @@ export const getPrintTemplateLabel = (templateId: string): string => {
   if (badgeTemplate) return `${badgeTemplate.role_label} 명찰`;
   if (templateId === DEFAULT_EXCHANGE_VOUCHER_TEMPLATE_ID) return "유료 옵션 교환권";
   return templateId;
+};
+
+export const getRegistrationPrintKind = (templateId: string): RegistrationPrintKind => {
+  if (findBuiltInBadgeTemplate(templateId)) return "badge";
+  if (templateId === DEFAULT_EXCHANGE_VOUCHER_TEMPLATE_ID) return "exchange_voucher";
+  throw new Error(`지원하지 않는 출력 템플릿입니다: ${templateId}`);
 };

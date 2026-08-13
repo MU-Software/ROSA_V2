@@ -12,6 +12,10 @@ import {
   type ProbeResult,
 } from "../printing/profiles";
 import { RcptImage } from "../printing/receipet";
+import {
+  REGISTRATION_PRINT_KINDS,
+  type RegistrationPrintKind,
+} from "../printing/output";
 import { toMessage } from "../utils/bytes";
 
 const SETTINGS_STORAGE_KEY = "rosa.printer.settings";
@@ -36,6 +40,7 @@ type StoredPrinterSettings = {
   devices: Record<string, PrinterSettings>;
   /** 버전 1의 프로파일 단위 설정. 장치별 설정이 생길 때까지 기본값으로만 쓴다. */
   legacyProfiles: Record<string, PrinterSettings>;
+  printRoutes?: Partial<Record<RegistrationPrintKind, string>>;
 };
 
 type LegacyStoredPrinterSettings = Omit<StoredPrinterSettings, "version"> & { version: 2 | 3 };
@@ -137,6 +142,14 @@ const parseSettingsMap = (value: unknown): Record<string, PrinterSettings> => {
   );
 };
 
+const parsePrintRoutes = (
+  value: unknown,
+): Partial<Record<RegistrationPrintKind, string>> => {
+  if (!isRecord(value)) return {};
+  return Object.fromEntries(REGISTRATION_PRINT_KINDS.flatMap((kind) =>
+    typeof value[kind] === "string" ? [[kind, value[kind]]] : []));
+};
+
 /**
  * PT-390 실측은 잡 크기와 거의 무관하게 4.7~5.5 초였다. 고정 비용이 지배하므로 고정
  * 15 초를 깔고 한계 20 KB/s 를 더한다 — 실측의 3 배 여유를 두면서도 멈춘 프린터를
@@ -154,6 +167,7 @@ export class PrinterManager {
   private states = new Map<string, PrinterState>();
   private settings: Record<string, PrinterSettings> = {};
   private legacyProfileSettings: Record<string, PrinterSettings> = {};
+  private printRoutes: Partial<Record<RegistrationPrintKind, string>> = {};
   private registrations = new Set<string>();
   private changeListeners = new Set<() => void>();
   private refreshing?: Promise<PrinterDevice[]>;
@@ -175,6 +189,7 @@ export class PrinterManager {
       if (stored.version === SETTINGS_STORAGE_VERSION || stored.version === 2 || stored.version === 3) {
         this.settings = parseSettingsMap(stored.devices);
         this.legacyProfileSettings = parseSettingsMap(stored.legacyProfiles);
+        this.printRoutes = parsePrintRoutes(stored.printRoutes);
         // 이전 값에는 paddingMm이 없으며 기본 1 mm가 적용된다. 다음 저장부터 v4로 기록한다.
         if (stored.version !== SETTINGS_STORAGE_VERSION) this.persistSettings();
       } else if ("version" in stored) {
@@ -225,6 +240,7 @@ export class PrinterManager {
       version: SETTINGS_STORAGE_VERSION,
       devices: this.settings,
       legacyProfiles: this.legacyProfileSettings,
+      printRoutes: this.printRoutes,
     };
     localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(stored));
   }
@@ -268,6 +284,30 @@ export class PrinterManager {
         (order.get(this.deviceStorageId(right)) ?? Number.MAX_SAFE_INTEGER));
   }
 
+  getPrintRoute(kind: RegistrationPrintKind): PrinterDevice | undefined {
+    const route = this.printRoutes[kind];
+    if (!route) return undefined;
+    return this.listRegisteredDevices().find((device) => this.deviceStorageId(device) === route);
+  }
+
+  hasPrintRoute(kind: RegistrationPrintKind): boolean {
+    return this.printRoutes[kind] !== undefined;
+  }
+
+  updatePrintRoute(kind: RegistrationPrintKind, key: string | null): void {
+    if (key === null) {
+      delete this.printRoutes[kind];
+    } else {
+      const device = this.devices.get(key);
+      if (!device || !this.isRegistered(key)) {
+        throw new Error(`등록된 프린터 "${key}" 를 찾지 못했습니다`);
+      }
+      this.printRoutes[kind] = this.deviceStorageId(device);
+    }
+    this.persistSettings();
+    this.notifyChange();
+  }
+
   isRegistered(key: string): boolean {
     const device = this.devices.get(key);
     return !!device && this.registrations.has(this.deviceStorageId(device));
@@ -289,6 +329,9 @@ export class PrinterManager {
     await this.disconnect(key);
     const id = this.deviceStorageId(device);
     this.registrations.delete(id);
+    for (const kind of REGISTRATION_PRINT_KINDS) {
+      if (this.printRoutes[kind] === id) delete this.printRoutes[kind];
+    }
     delete this.settings[id];
     this.persistRegistrations();
     this.persistSettings();

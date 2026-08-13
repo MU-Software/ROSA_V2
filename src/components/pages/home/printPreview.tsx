@@ -45,7 +45,8 @@ const BadgePreview: FC<{ product: OrderProductRelation }> = ({ product }) => {
     "ticket.organization": ticket.organization ?? undefined,
     "badge.role_label": template.role_label,
   };
-  const selectedPrinter = printers.find(({ key }) => key === selectedPrinterKey) ?? printers[0];
+  const selectedPrinter = printers.find(({ key }) => key === selectedPrinterKey) ??
+    printerManager.getPrintRoute("badge") ?? printers[0];
 
   const printBadge = async () => {
     if (!selectedPrinter) return;
