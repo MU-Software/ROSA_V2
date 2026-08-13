@@ -83,6 +83,7 @@ export type OrderProductRelationTag = {
 
 export type OrderProductRelation = {
   id: EntityId;
+  scancode_token: string;
   product: Product;
   is_ticket: boolean;
   options: OrderProductOptionRelation[];

@@ -256,6 +256,7 @@ export const TemplatesPage: FC<{ gateway: RegistrationDeskGateway }> = ({ gatewa
                   "ticket.name": "홍길동",
                   "ticket.organization": "파이썬 사용자 모임",
                   "badge.role_label": sourceTemplate?.role_label ?? "참가자",
+                  "order_product.scancode": "opr:TestShortId:test-salt",
                 }}
                 onDocumentChange={commitDocument}
                 onSelectedElementChange={setSelectedElementId}

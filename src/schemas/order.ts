@@ -54,6 +54,7 @@ export const orderProductRelationTagSchema = z.object({
 
 export const orderProductRelationSchema = z.object({
   id: z.string(),
+  scancode_token: z.string().regex(/^opr:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$/),
   product: productSchema,
   is_ticket: z.boolean(),
   options: z.array(orderProductOptionRelationSchema),

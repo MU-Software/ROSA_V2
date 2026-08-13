@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { ExchangeVoucher } from "../components/printing/exchangeVoucher";
 import { PrintTemplateRenderer } from "../components/printing/templateRenderer";
 import { getPaidOptionExchangeTargets } from "../domain";
+import { createQrCodeDataUrl } from "./qrCode";
 import {
   DEFAULT_EXCHANGE_VOUCHER_TEMPLATE_ID,
   type PrintQueueEntry,
@@ -26,7 +27,7 @@ const waitForImages = async (element: HTMLElement): Promise<void> => {
   }));
 };
 
-const createRegistrationPrintJobDocument = ({
+const createRegistrationPrintJobDocument = async ({
   entry,
   width,
   height,
@@ -44,12 +45,15 @@ const createRegistrationPrintJobDocument = ({
       "ticket.name": ticket.name,
       "ticket.organization": ticket.organization ?? undefined,
       "badge.role_label": badgeTemplate.role_label,
+      "order_product.scancode": product.scancode_token,
     };
+    const qrCodeDataUrl = await createQrCodeDataUrl(product.scancode_token);
     return (
       <PrintTemplateRenderer
         document={badgeTemplate.document}
         layoutType={selectTemplateLayoutType(width, height)}
         values={values}
+        qrImageSources={{ "order_product.scancode": qrCodeDataUrl }}
         showQrPlaceholder={false}
       />
     );
@@ -90,10 +94,11 @@ export async function renderRegistrationPrintJob(
   const root = createRoot(host);
 
   try {
+    const content = await createRegistrationPrintJobDocument({ entry, width, height });
     flushSync(() => {
       root.render(
         <Box sx={{ width: RENDER_WIDTH }}>
-          {createRegistrationPrintJobDocument({ entry, width, height })}
+          {content}
         </Box>,
       );
     });

@@ -44,6 +44,7 @@ const BadgePreview: FC<{ product: OrderProductRelation }> = ({ product }) => {
     "ticket.name": ticket.name,
     "ticket.organization": ticket.organization ?? undefined,
     "badge.role_label": template.role_label,
+    "order_product.scancode": product.scancode_token,
   };
   const selectedPrinter = printers.find(({ key }) => key === selectedPrinterKey) ??
     printerManager.getPrintRoute("badge") ?? printers[0];
@@ -156,7 +157,8 @@ export const PrintPreviewDialog: FC<{
       <DialogContent>
         <Stack spacing={3} sx={{ pt: 0.5 }}>
           <Alert severity="info">
-            역할 태그에 따라 기본 명찰 템플릿을 선택합니다. 명찰 QR 데이터 연결은 서버 연동 단계에서 적용됩니다.
+            역할 태그에 따라 기본 명찰 템플릿을 선택하며, 명찰 QR에는 주문상품 스캔 코드를
+            사용합니다.
           </Alert>
           {!hasBadge && exchangeTargets.length === 0 && (
             <Alert severity="warning">미리볼 출력물이 없습니다.</Alert>

@@ -1,9 +1,11 @@
 import { QrCode2 } from "@mui/icons-material";
 import { Box, Stack, Typography } from "@mui/material";
-import { useLayoutEffect, useRef, type FC, type Ref } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type FC, type Ref } from "react";
+import { createQrCodeDataUrl } from "../../printing/qrCode";
 import type {
   PrintTemplateDocument,
   PrintTemplateElement,
+  TemplateBinding,
   TemplateBindingValues,
   TemplateLayoutType,
 } from "../../printing/templateDocument";
@@ -92,13 +94,84 @@ const TemplateText: FC<{
   );
 };
 
+const TemplateQr: FC<{
+  elementId: string;
+  frameStyle: Record<string, unknown>;
+  imageSource?: string;
+  scancode?: string;
+  showPlaceholder: boolean;
+}> = ({ elementId, frameStyle, imageSource, scancode, showPlaceholder }) => {
+  const [generation, setGeneration] = useState<{
+    value: string;
+    source?: string;
+    failed?: boolean;
+  }>();
+
+  useEffect(() => {
+    if (imageSource || !scancode) return;
+
+    let active = true;
+    void createQrCodeDataUrl(scancode).then((source) => {
+      if (active) setGeneration({ value: scancode, source });
+    }).catch(() => {
+      if (active) setGeneration({ value: scancode, failed: true });
+    });
+    return () => {
+      active = false;
+    };
+  }, [imageSource, scancode]);
+
+  const currentGeneration = generation?.value === scancode ? generation : undefined;
+  const source = imageSource ?? currentGeneration?.source;
+  if (source) {
+    return (
+      <Box
+        component="img"
+        src={source}
+        alt="주문상품 QR"
+        data-template-element-id={elementId}
+        sx={{ ...frameStyle, objectFit: "contain" }}
+      />
+    );
+  }
+  if (!showPlaceholder) return null;
+
+  return (
+    <Box
+      data-template-element-id={elementId}
+      sx={{
+        ...frameStyle,
+        display: "grid",
+        placeItems: "center",
+        border: 1,
+        borderColor: "common.black",
+      }}
+    >
+      <Stack spacing={0.25} sx={{ alignItems: "center" }}>
+        <QrCode2 sx={{ fontSize: "7cqi" }} />
+        <Typography sx={{ fontSize: "1.25cqi", lineHeight: 1 }}>
+          {currentGeneration?.failed ? "QR 생성 실패" : scancode ? "QR 생성 중" : "QR 데이터 없음"}
+        </Typography>
+      </Stack>
+    </Box>
+  );
+};
+
 export const PrintTemplateRenderer: FC<{
   document: PrintTemplateDocument;
   layoutType: TemplateLayoutType;
   values: TemplateBindingValues;
   rootRef?: Ref<HTMLDivElement>;
+  qrImageSources?: Partial<Record<TemplateBinding, string>>;
   showQrPlaceholder?: boolean;
-}> = ({ document, layoutType, values, rootRef, showQrPlaceholder = true }) => {
+}> = ({
+  document,
+  layoutType,
+  values,
+  rootRef,
+  qrImageSources,
+  showQrPlaceholder = true,
+}) => {
   const layout = document.layouts[layoutType];
   const media = getOrientedTemplateMedia(document, layoutType);
 
@@ -131,27 +204,15 @@ export const PrintTemplateRenderer: FC<{
         } as const;
 
         if (element.kind === "qr") {
-          if (!showQrPlaceholder) return null;
-          const scancode = values[element.binding];
           return (
-            <Box
+            <TemplateQr
               key={element.id}
-              data-template-element-id={element.id}
-              sx={{
-                ...frameStyle,
-                display: "grid",
-                placeItems: "center",
-                border: 1,
-                borderColor: "common.black",
-              }}
-            >
-              <Stack spacing={0.25} sx={{ alignItems: "center" }}>
-                <QrCode2 sx={{ fontSize: "7cqi" }} />
-                <Typography sx={{ fontSize: "1.25cqi", lineHeight: 1 }}>
-                  {scancode ? "QR 데이터 준비됨" : "QR 연동 예정"}
-                </Typography>
-              </Stack>
-            </Box>
+              elementId={element.id}
+              frameStyle={frameStyle}
+              imageSource={qrImageSources?.[element.binding]}
+              scancode={values[element.binding]}
+              showPlaceholder={showQrPlaceholder}
+            />
           );
         }
 
