@@ -24,6 +24,12 @@ src/mocks/
 *.sln
 *.sw?
 
+# Play 업로드 서명 키와 서비스 계정 키. key.properties 는 gen/android/.gitignore 가
+# 이미 막고 있다. 키스토어 자체는 레포 밖(~/.android-keystores/)에 둔다.
+src-tauri/gen/android/play-service-account.json
+*.jks
+*.keystore
+
 # Tauri / Cargo
 src-tauri/target/
 src-tauri/gen/schemas

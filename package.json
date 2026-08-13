@@ -14,7 +14,8 @@
     "tauri:android:dev": "node scripts/tauri.mjs android dev",
     "tauri:android:build": "node scripts/tauri.mjs android build",
     "tauri:ios:dev": "node scripts/tauri.mjs ios dev",
-    "tauri:ios:build": "node scripts/tauri.mjs ios build"
+    "tauri:ios:build": "node scripts/tauri.mjs ios build",
+    "play:deploy": "node scripts/play-deploy.mjs"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
@@ -38,6 +39,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@googleapis/androidpublisher": "^37.0.0",
     "@tauri-apps/cli": "^2.10.1",
     "@types/node": "^24.12.2",
     "@types/react": "^19.2.14",
