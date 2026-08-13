@@ -84,11 +84,31 @@ fn prefer_callout_ports(ports: Vec<SerialPortInfo>) -> Vec<SerialPortInfo> {
     ports
 }
 
+/// 온보드 UART 는 항상 있지만 QR 리더가 붙는 자리가 아니라 목록만 어지럽힌다.
+#[cfg(target_os = "linux")]
+fn hide_builtin_uarts(ports: Vec<SerialPortInfo>) -> Vec<SerialPortInfo> {
+    const BUILTIN_PREFIXES: [&str; 3] = ["/dev/ttyAMA", "/dev/ttyS", "/dev/ttyprintk"];
+
+    ports
+        .into_iter()
+        .filter(|port| {
+            !BUILTIN_PREFIXES
+                .iter()
+                .any(|prefix| port.port_name.starts_with(prefix))
+        })
+        .collect()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn hide_builtin_uarts(ports: Vec<SerialPortInfo>) -> Vec<SerialPortInfo> {
+    ports
+}
+
 #[tauri::command]
 pub fn serial_list_ports() -> CommandResult<Vec<PortInfo>> {
     let ports = available_ports()
         .map_err(|e| CommandError::serial("시리얼 포트 열거에 실패했습니다", e, "unavailable"))?;
-    Ok(prefer_callout_ports(ports)
+    Ok(hide_builtin_uarts(prefer_callout_ports(ports))
         .into_iter()
         .map(|p| {
             let (port_type, manufacturer, product, serial_number, vid, pid) = match &p.port_type {
