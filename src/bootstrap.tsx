@@ -13,6 +13,7 @@ import { DEFAULT_PERSISTED_APP_STATE, savePersistedAppState } from "./apis/appSt
 import {
   useCheckRosaSessionMutation,
   useConnectRosaMutation,
+  useRosaLogoutMutation,
   type CheckedRosaConnection,
 } from "./hooks/useRosaConnection";
 import { LoginPage } from "./pages/login";
@@ -42,6 +43,7 @@ export const AppBootstrap: FC = () => {
       ? { status: "connecting" }
       : { status: "setup" };
   });
+  const logoutMutation = useRosaLogoutMutation();
 
   const connect = useCallback(async (serverOrigin: string, persist: boolean) => {
     const normalizedOrigin = normalizeServerOrigin(serverOrigin);
@@ -79,6 +81,35 @@ export const AppBootstrap: FC = () => {
           : undefined,
     });
   }, [queryClient, state]);
+
+  useEffect(() => {
+    if (state.status !== "ready") return;
+    const connection = state.connection;
+    connection.gateway.setAuthenticationRequiredHandler(() => {
+      queryClient.clear();
+      setState((current) => current.status === "ready" && current.connection === connection
+        ? { status: "login", connection }
+        : current);
+    });
+    return () => connection.gateway.setAuthenticationRequiredHandler(null);
+  }, [queryClient, state]);
+
+  const logout = useCallback(() => {
+    if (state.status !== "ready") return;
+    const connection = state.connection;
+    setState({ status: "connecting" });
+    void logoutMutation.mutateAsync(connection).then(() => {
+      queryClient.clear();
+      savePersistedAppState(DEFAULT_PERSISTED_APP_STATE);
+      setState({ status: "login", connection });
+    }).catch((error: unknown) => {
+      setState({
+        status: "error",
+        server_origin: connection.resolved.server_origin,
+        message: errorMessage(error),
+      });
+    });
+  }, [logoutMutation, queryClient, state]);
 
   if (isExternalDisplay) {
     return <App registrationDeskGateway={null} onChangeServer={changeServer} />;
@@ -154,6 +185,7 @@ export const AppBootstrap: FC = () => {
     <App
       registrationDeskGateway={state.connection.gateway}
       onChangeServer={changeServer}
+      onLogout={logout}
     />
   );
 };

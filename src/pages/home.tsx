@@ -7,6 +7,7 @@ import {
   DesignServicesOutlined,
   DnsOutlined,
   LockOutlined,
+  LogoutOutlined,
   MenuOutlined,
   PauseCircleOutlined,
   PowerSettingsNew,
@@ -123,7 +124,8 @@ const REGISTRATION_STATE_PRESENTATION: Record<
 export const HomePage: FC<{
   gateway: RegistrationDeskGateway | null;
   onChangeServer: () => void;
-}> = ({ gateway, onChangeServer }) => {
+  onLogout?: () => void;
+}> = ({ gateway, onChangeServer, onLogout }) => {
   const {
     active_order_product_scancode: activeOrderProductScancode,
     automatic_registration_enabled: isAutomaticRegistrationEnabled,
@@ -489,6 +491,18 @@ export const HomePage: FC<{
           <ListItemIcon><DnsOutlined fontSize="small" /></ListItemIcon>
           <ListItemText>서버 변경</ListItemText>
         </MenuItem>
+        {onLogout && (
+          <MenuItem
+            disabled={registrationState !== "closed"}
+            onClick={() => {
+              setMenuAnchor(null);
+              onLogout();
+            }}
+          >
+            <ListItemIcon><LogoutOutlined fontSize="small" /></ListItemIcon>
+            <ListItemText>로그아웃</ListItemText>
+          </MenuItem>
+        )}
       </Menu>
 
       <Dialog open={closeDeskDialogOpen} onClose={() => setCloseDeskDialogOpen(false)}>

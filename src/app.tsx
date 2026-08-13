@@ -31,7 +31,8 @@ const TemplatesPage = lazy(async () => ({
 export const App: FC<{
   registrationDeskGateway: RegistrationDeskGateway | null;
   onChangeServer: () => void;
-}> = ({ registrationDeskGateway, onChangeServer }) => {
+  onLogout?: () => void;
+}> = ({ registrationDeskGateway, onChangeServer, onLogout }) => {
   const location = useLocation();
   const isExternalDisplay = location.pathname === "/display";
   const [appState, setAppState] = useState<AppContextData>(loadAppConfig);
@@ -113,7 +114,13 @@ export const App: FC<{
       <Routes>
         <Route
           path="/"
-          element={<HomePage gateway={registrationDeskGateway} onChangeServer={onChangeServer} />}
+          element={(
+            <HomePage
+              gateway={registrationDeskGateway}
+              onChangeServer={onChangeServer}
+              onLogout={onLogout}
+            />
+          )}
         />
         <Route path="/display" element={<ExternalDisplayPage />} />
         <Route

@@ -66,12 +66,17 @@ export class RegistrationDeskHttpError extends Error {
 
 export class HttpRegistrationDeskGateway implements RegistrationDeskGateway {
   private csrfToken: string | undefined;
+  private authenticationRequiredHandler: (() => void) | null = null;
   private readonly resolved: ResolvedRosaDiscovery;
   private readonly transport: HttpTransport;
 
   constructor(resolved: ResolvedRosaDiscovery, transport: HttpTransport) {
     this.resolved = resolved;
     this.transport = transport;
+  }
+
+  setAuthenticationRequiredHandler(handler: (() => void) | null): void {
+    this.authenticationRequiredHandler = handler;
   }
 
   private routeUrl(routeKey: RouteKey, id?: string): URL {
@@ -94,6 +99,9 @@ export class HttpRegistrationDeskGateway implements RegistrationDeskGateway {
   private async responseError(response: Response): Promise<RegistrationDeskHttpError> {
     let body: unknown;
     try { body = await response.json(); } catch { body = undefined; }
+    if (response.status === 401 || response.status === 403) {
+      this.authenticationRequiredHandler?.();
+    }
     return new RegistrationDeskHttpError(response.status, body);
   }
 
@@ -117,6 +125,7 @@ export class HttpRegistrationDeskGateway implements RegistrationDeskGateway {
     url: URL,
     schema: z.ZodType<T> | null,
     init: RequestInit = {},
+    acceptedStatuses: readonly number[] = [],
   ): Promise<T> {
     const method = init.method?.toUpperCase() ?? "GET";
     const isSafeMethod = ["GET", "HEAD", "OPTIONS"].includes(method);
@@ -137,7 +146,9 @@ export class HttpRegistrationDeskGateway implements RegistrationDeskGateway {
       headers,
     });
     this.captureCsrf(response);
-    if (!response.ok) throw await this.responseError(response);
+    if (!response.ok && !acceptedStatuses.includes(response.status)) {
+      throw await this.responseError(response);
+    }
     if (!schema) return undefined as T;
     return schema.parse(await response.json());
   }
@@ -161,6 +172,12 @@ export class HttpRegistrationDeskGateway implements RegistrationDeskGateway {
       }),
     });
     return this.getSession();
+  }
+
+  logout(): Promise<void> {
+    const authentication = this.resolved.discovery.authentication;
+    const url = new URL(authentication.logout_url, this.resolved.server_origin);
+    return this.request(url, null, { method: authentication.logout_method }, [401]);
   }
 
   searchOrders(params: SearchOrdersParams): Promise<PaginatedResponse<Order>> {

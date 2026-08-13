@@ -34,3 +34,8 @@ export const useRosaLoginMutation = (connection: RosaConnection) => useMutation(
   mutationFn: ({ email, password }: { email: string; password: string }) =>
     connection.gateway.login(email, password),
 });
+
+export const useRosaLogoutMutation = () => useMutation({
+  mutationKey: ["mutation", "rosa", "logout"],
+  mutationFn: (connection: RosaConnection) => connection.gateway.logout(),
+});
