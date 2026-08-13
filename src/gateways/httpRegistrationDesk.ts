@@ -26,6 +26,11 @@ import type { Order } from "../domain";
 
 type RouteKey = keyof ResolvedRosaDiscovery["discovery"]["routes"];
 
+type RegistrationDeskRequestInit = RequestInit & {
+  acceptedStatuses?: readonly number[];
+  authenticationEndpoint?: boolean;
+};
+
 const queryString = (params: Record<string, string | number | undefined>): string => {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
@@ -96,12 +101,32 @@ export class HttpRegistrationDeskGateway implements RegistrationDeskGateway {
     return cookieValue(document.cookie, this.resolved.discovery.authentication.csrf.cookie_name);
   }
 
-  private async responseError(response: Response): Promise<RegistrationDeskHttpError> {
+  private async checkAuthenticationError(status: number, authenticationEndpoint: boolean): Promise<void> {
+    if (!this.authenticationRequiredHandler || (status !== 401 && status !== 403)) return;
+    if (status === 401 || authenticationEndpoint) {
+      this.authenticationRequiredHandler();
+      return;
+    }
+
+    try {
+      const response = await this.transport.fetch(
+        new URL(this.resolved.discovery.authentication.session_url, this.resolved.server_origin),
+        { credentials: "include" },
+      );
+      this.captureCsrf(response);
+      if (!response.ok) this.authenticationRequiredHandler();
+    } catch {
+      return;
+    }
+  }
+
+  private async responseError(
+    response: Response,
+    authenticationEndpoint = false,
+  ): Promise<RegistrationDeskHttpError> {
     let body: unknown;
     try { body = await response.json(); } catch { body = undefined; }
-    if (response.status === 401 || response.status === 403) {
-      this.authenticationRequiredHandler?.();
-    }
+    await this.checkAuthenticationError(response.status, authenticationEndpoint);
     return new RegistrationDeskHttpError(response.status, body);
   }
 
@@ -114,7 +139,7 @@ export class HttpRegistrationDeskGateway implements RegistrationDeskGateway {
       { credentials: "include" },
     );
     this.captureCsrf(response);
-    if (!response.ok) throw await this.responseError(response);
+    if (!response.ok) throw await this.responseError(response, true);
 
     const initializedToken = this.browserCsrfToken() ?? this.csrfToken;
     if (!initializedToken) throw new Error("서버에서 CSRF 토큰을 받지 못했습니다.");
@@ -124,9 +149,13 @@ export class HttpRegistrationDeskGateway implements RegistrationDeskGateway {
   private async request<T>(
     url: URL,
     schema: z.ZodType<T> | null,
-    init: RequestInit = {},
-    acceptedStatuses: readonly number[] = [],
+    options: RegistrationDeskRequestInit = {},
   ): Promise<T> {
+    const {
+      acceptedStatuses = [],
+      authenticationEndpoint = false,
+      ...init
+    } = options;
     const method = init.method?.toUpperCase() ?? "GET";
     const isSafeMethod = ["GET", "HEAD", "OPTIONS"].includes(method);
     const csrfToken = isSafeMethod ? undefined : await this.ensureCsrfToken();
@@ -147,7 +176,7 @@ export class HttpRegistrationDeskGateway implements RegistrationDeskGateway {
     });
     this.captureCsrf(response);
     if (!response.ok && !acceptedStatuses.includes(response.status)) {
-      throw await this.responseError(response);
+      throw await this.responseError(response, authenticationEndpoint);
     }
     if (!schema) return undefined as T;
     return schema.parse(await response.json());
@@ -158,7 +187,7 @@ export class HttpRegistrationDeskGateway implements RegistrationDeskGateway {
       this.resolved.discovery.authentication.session_url,
       this.resolved.server_origin,
     );
-    return this.request(url, registrationDeskSessionSchema);
+    return this.request(url, registrationDeskSessionSchema, { authenticationEndpoint: true });
   }
 
   async login(email: string, password: string): Promise<RegistrationDeskSession> {
@@ -177,7 +206,10 @@ export class HttpRegistrationDeskGateway implements RegistrationDeskGateway {
   logout(): Promise<void> {
     const authentication = this.resolved.discovery.authentication;
     const url = new URL(authentication.logout_url, this.resolved.server_origin);
-    return this.request(url, null, { method: authentication.logout_method }, [401]);
+    return this.request(url, null, {
+      method: authentication.logout_method,
+      acceptedStatuses: [401],
+    });
   }
 
   searchOrders(params: SearchOrdersParams): Promise<PaginatedResponse<Order>> {
