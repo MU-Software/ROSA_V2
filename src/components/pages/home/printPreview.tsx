@@ -16,21 +16,15 @@ import {
   ToggleButtonGroup,
   Typography,
 } from "@mui/material";
-import { useRef, useState, type FC } from "react";
+import { useState, type FC } from "react";
 import { printerManager, type PrinterDevice } from "../../../apis/printer";
+import { ExchangeVoucher } from "../../printing/exchangeVoucher";
 import { PrintTemplateRenderer } from "../../printing/templateRenderer";
-import {
-  getPaidOptionExchangeTargets,
-  type OrderProductOptionRelation,
-  type OrderProductRelation,
-} from "../../../domain";
+import { getPaidOptionExchangeTargets, type OrderProductRelation } from "../../../domain";
+import { createRegistrationPrintQueue } from "../../../printing/queue";
+import { renderRegistrationPrintJob } from "../../../printing/registrationJobRenderer";
 import { selectBadgeTemplate } from "../../../printing/templates";
-import { rasterizeTemplate } from "../../../printing/templateRaster";
-import {
-  selectTemplateLayoutType,
-  type TemplateBindingValues,
-  type TemplateLayoutType,
-} from "../../../printing/templateDocument";
+import type { TemplateBindingValues, TemplateLayoutType } from "../../../printing/templateDocument";
 import { usePrintMutation } from "../../../hooks/usePrintMutation";
 import { useRegisteredPrinterDevices } from "../../../hooks/usePrinter";
 
@@ -41,8 +35,6 @@ const BadgePreview: FC<{ product: OrderProductRelation }> = ({ product }) => {
   const [layoutType, setLayoutType] = useState<TemplateLayoutType>("wide");
   const [selectedPrinterKey, setSelectedPrinterKey] = useState("");
   const [printMessage, setPrintMessage] = useState<string>();
-  const widePrintRef = useRef<HTMLDivElement>(null);
-  const compactPrintRef = useRef<HTMLDivElement>(null);
   const printers = useRegisteredPrinterDevices();
   const printMutation = usePrintMutation();
   const ticket = product.ticket_info;
@@ -64,10 +56,10 @@ const BadgePreview: FC<{ product: OrderProductRelation }> = ({ product }) => {
       }
       const { width, height } = printerManager.imageSize(selectedPrinter.key);
       if (!height) throw new Error("프린터 라벨 높이가 설정되지 않았습니다");
-      const printLayoutType = selectTemplateLayoutType(width, height);
-      const element = printLayoutType === "wide" ? widePrintRef.current : compactPrintRef.current;
-      if (!element) throw new Error("명찰 템플릿을 준비하지 못했습니다");
-      const image = await rasterizeTemplate(element, width, height);
+      const entry = createRegistrationPrintQueue(product).snapshot()
+        .find(({ job }) => job.template_id === template.template_id);
+      if (!entry) throw new Error("명찰 출력 작업을 준비하지 못했습니다");
+      const image = await renderRegistrationPrintJob(entry, width, height);
       const result = await printMutation.mutateAsync({ device: selectedPrinter, image });
       setPrintMessage(result.completionConfirmed ? "명찰 출력을 완료했습니다." : "명찰을 프린터로 전송했습니다.");
     } catch (reason) {
@@ -118,25 +110,6 @@ const BadgePreview: FC<{ product: OrderProductRelation }> = ({ product }) => {
           values={values}
         />
       </Paper>
-      <Box
-        aria-hidden
-        sx={{ position: "fixed", left: -10000, top: 0, width: 900, pointerEvents: "none" }}
-      >
-        <PrintTemplateRenderer
-          document={template.document}
-          layoutType="wide"
-          values={values}
-          rootRef={widePrintRef}
-          showQrPlaceholder={false}
-        />
-        <PrintTemplateRenderer
-          document={template.document}
-          layoutType="compact"
-          values={values}
-          rootRef={compactPrintRef}
-          showQrPlaceholder={false}
-        />
-      </Box>
       {printers.length === 0 ? (
         <Alert severity="warning">장치 진단에서 명찰 프린터를 먼저 등록해주세요.</Alert>
       ) : (
@@ -169,82 +142,6 @@ const BadgePreview: FC<{ product: OrderProductRelation }> = ({ product }) => {
   );
 };
 
-const ExchangeVoucherPreview: FC<{
-  product: OrderProductRelation;
-  targets: OrderProductOptionRelation[];
-}> = ({ product, targets }) => {
-  const longestText = Math.max(...targets.flatMap((target) => [
-    target.product_option_group.name.length,
-    target.product_option?.name.length ?? 0,
-  ]));
-  const density = Math.max(targets.length, longestText / 18);
-  const titleFontSize = Math.max(1.1, Math.min(2.5, 2.7 - (density - 1) * 0.32));
-  const valueFontSize = Math.max(0.95, titleFontSize * 0.72);
-  const columns = targets.length >= 4 && longestText <= 24 ? 2 : 1;
-
-  return (
-    <Paper
-      variant="outlined"
-      sx={{
-        width: "100%",
-        maxWidth: 560,
-        aspectRatio: "3 / 2",
-        mx: "auto",
-        p: { xs: 2, sm: 3 },
-        display: "flex",
-        bgcolor: "common.white",
-        color: "common.black",
-        overflow: "hidden",
-      }}
-    >
-      <Stack sx={{ width: "100%", minWidth: 0, justifyContent: "space-between" }}>
-        <Typography variant="overline" sx={{ fontWeight: 800, lineHeight: 1 }}>
-          유료 옵션 교환권
-        </Typography>
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-            alignContent: "center",
-            gap: { xs: 1, sm: 1.5 },
-            flex: 1,
-            py: 1,
-          }}
-        >
-          {targets.map((target) => (
-            <Box key={target.id} sx={{ minWidth: 0 }}>
-              <Typography
-                sx={{
-                  fontWeight: 900,
-                  fontSize: `clamp(1rem, 6vw, ${titleFontSize}rem)`,
-                  lineHeight: 1.08,
-                  overflowWrap: "anywhere",
-                }}
-              >
-                {target.product_option_group.name}
-              </Typography>
-              <Typography
-                sx={{
-                  mt: 0.25,
-                  fontWeight: 700,
-                  fontSize: `clamp(0.9rem, 4vw, ${valueFontSize}rem)`,
-                  lineHeight: 1.1,
-                  overflowWrap: "anywhere",
-                }}
-              >
-                {target.product_option?.name}
-              </Typography>
-            </Box>
-          ))}
-        </Box>
-        <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1 }}>
-          {product.id}
-        </Typography>
-      </Stack>
-    </Paper>
-  );
-};
-
 export const PrintPreviewDialog: FC<{
   product: OrderProductRelation;
   onClose: () => void;
@@ -270,7 +167,9 @@ export const PrintPreviewDialog: FC<{
               <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
                 유료 옵션 교환권 1장 · {exchangeTargets.length}개 항목
               </Typography>
-              <ExchangeVoucherPreview product={product} targets={exchangeTargets} />
+              <Box sx={{ width: "100%", maxWidth: 560, mx: "auto" }}>
+                <ExchangeVoucher product={product} targets={exchangeTargets} />
+              </Box>
             </Stack>
           )}
         </Stack>

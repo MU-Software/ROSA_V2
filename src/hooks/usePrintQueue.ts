@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   PrintJobExecution,
   PrintJobExecutor,
@@ -8,21 +8,51 @@ import type {
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : "출력 중 알 수 없는 오류가 발생했습니다.";
 
-export const usePrintQueue = <TData,>() => {
-  const [executions, setExecutions] = useState<PrintJobExecution[]>([]);
+export const usePrintQueue = <TData,>({
+  executions,
+  onExecutionsChange,
+}: {
+  executions: readonly PrintJobExecution[];
+  onExecutionsChange: (executions: PrintJobExecution[]) => void;
+}) => {
   const [isPending, setIsPending] = useState(false);
-  const executionsRef = useRef<PrintJobExecution[]>([]);
+  const executionsRef = useRef<PrintJobExecution[]>([...executions]);
   const runningRef = useRef(false);
+  useEffect(() => {
+    if (!runningRef.current) executionsRef.current = [...executions];
+  }, [executions]);
 
   const updateExecutions = useCallback((next: PrintJobExecution[]) => {
     executionsRef.current = next;
-    setExecutions(next);
-  }, []);
+    onExecutionsChange(next);
+  }, [onExecutionsChange]);
 
   const reset = useCallback(() => {
     runningRef.current = false;
     setIsPending(false);
     updateExecutions([]);
+  }, [updateExecutions]);
+
+  const markCompleted = useCallback((
+    entries: readonly PrintQueueEntry<TData>[],
+    jobId: string,
+  ) => {
+    const executionById = new Map(executionsRef.current.map((execution) => [execution.id, execution]));
+    updateExecutions(entries.map((entry) => entry.id === jobId
+      ? {
+        id: entry.id,
+        template_id: entry.job.template_id,
+        status: "completed",
+        error: null,
+        completion_confirmed: true,
+      }
+      : executionById.get(entry.id) ?? {
+        id: entry.id,
+        template_id: entry.job.template_id,
+        status: "waiting",
+        error: null,
+        completion_confirmed: null,
+      }));
   }, [updateExecutions]);
 
   const run = useCallback(async (
@@ -76,5 +106,5 @@ export const usePrintQueue = <TData,>() => {
     return executionsRef.current;
   }, [updateExecutions]);
 
-  return { executions, isPending, reset, run };
+  return { isPending, markCompleted, reset, run };
 };

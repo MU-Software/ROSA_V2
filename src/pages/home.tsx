@@ -72,14 +72,12 @@ import {
 import { usePrintQueue } from "../hooks/usePrintQueue";
 import { useQrScanner } from "../hooks/useQrScanner";
 import { useQrTrigger } from "../hooks/useQrTrigger";
+import { useRegistrationPrintExecutor } from "../hooks/useRegistrationPrintExecutor";
 import {
   createRegistrationPrintQueue,
-  DEFAULT_BADGE_TEMPLATE_ID,
-  getPrintTemplateLabel,
   type PrintJobExecution,
   type RegistrationPrintData,
 } from "../printing/queue";
-import { isBuiltInBadgeTemplateId } from "../printing/templates";
 import { getQrInputMode } from "../utils/platform";
 
 const DEFAULT_FAREWELL_DURATION_MS = 3000;
@@ -126,6 +124,7 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
     active_order_product_scancode: activeOrderProductScancode,
     automatic_registration_enabled: isAutomaticRegistrationEnabled,
     order_product_relation: registrationProduct,
+    print_job_executions: printJobExecutions,
     registration_state: registrationState,
     setAppContext,
   } = useAppContext();
@@ -133,37 +132,31 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
     useState<AutomaticRegistrationStage>("lookup");
   const [automaticFailureProduct, setAutomaticFailureProduct] =
     useState<OrderProductRelation | null>(null);
-  const [mockPrintFailureTemplateId, setMockPrintFailureTemplateId] = useState<string | null>(null);
   const [closeDeskDialogOpen, setCloseDeskDialogOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const automaticRunRef = useRef(false);
-  const mockPrintFailureRef = useRef<string | null>(null);
+  const updatePrintJobExecutions = useCallback((executions: PrintJobExecution[]) => {
+    setAppContext((current) => ({ ...current, print_job_executions: executions }));
+  }, [setAppContext]);
   const {
-    executions: printJobExecutions,
     isPending: printOperationPending,
+    markCompleted: markPrintJobCompleted,
     reset: resetPrintJobs,
     run: runPrintJobs,
-  } = usePrintQueue<RegistrationPrintData>();
+  } = usePrintQueue<RegistrationPrintData>({
+    executions: printJobExecutions,
+    onExecutionsChange: updatePrintJobExecutions,
+  });
+  const { execute: executePrintJob } = useRegistrationPrintExecutor();
   const registrationDeskQueryClient = useRegistrationDeskQueryClient(gateway);
-  const runMockPrintJobs = (
+  const printRegistrationProduct = (
     product: OrderProductRelation,
     jobIds?: readonly string[],
-  ): Promise<readonly PrintJobExecution[]> => {
-    const entries = createRegistrationPrintQueue(product).snapshot();
-    return runPrintJobs(entries, async (entry) => {
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 400));
-      const failureTemplateId = mockPrintFailureRef.current;
-      const shouldFail = failureTemplateId === entry.job.template_id ||
-        (failureTemplateId === DEFAULT_BADGE_TEMPLATE_ID &&
-          isBuiltInBadgeTemplateId(entry.job.template_id));
-      if (shouldFail) {
-        mockPrintFailureRef.current = null;
-        setMockPrintFailureTemplateId(null);
-        throw new Error(`${getPrintTemplateLabel(entry.job.template_id)} 모의 출력에 실패했습니다.`);
-      }
-      return { completion_confirmed: true };
-    }, jobIds);
-  };
+  ): Promise<readonly PrintJobExecution[]> => runPrintJobs(
+    createRegistrationPrintQueue(product).snapshot(),
+    executePrintJob,
+    jobIds,
+  );
   const automaticMarkUsedMutation = useModifyOrderProductMutation(gateway);
   const automaticRegistrationMutation = useMutation({
     mutationFn: async (rawScancode: string) => {
@@ -204,7 +197,7 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
         ...current,
         order_product_relation: updatedProduct,
       }));
-      await runMockPrintJobs(updatedProduct);
+      await printRegistrationProduct(updatedProduct);
       setAppContext((current) => ({
         ...current,
         registration_state: current.registration_state === "registering"
@@ -368,14 +361,22 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
 
   const reprintAutomaticProduct = (
     product: OrderProductRelation,
-  ): Promise<readonly PrintJobExecution[]> => runMockPrintJobs(product);
+  ): Promise<readonly PrintJobExecution[]> => printRegistrationProduct(product);
 
   const retryAutomaticPrintJob = (
     product: OrderProductRelation,
     printJobId: string,
-  ): Promise<readonly PrintJobExecution[]> => runMockPrintJobs(product, [printJobId]);
+  ): Promise<readonly PrintJobExecution[]> => printRegistrationProduct(product, [printJobId]);
+
+  const markAutomaticPrintJobCompleted = (
+    product: OrderProductRelation,
+    printJobId: string,
+  ) => {
+    markPrintJobCompleted(createRegistrationPrintQueue(product).snapshot(), printJobId);
+  };
 
   const updateAutomaticProduct = (updatedProduct: OrderProductRelation) => {
+    resetPrintJobs();
     setAppContext((current) => current.order_product_relation?.id === updatedProduct.id
       ? { ...current, order_product_relation: updatedProduct }
       : current);
@@ -419,11 +420,7 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
     onStatusChanged: handleAutomaticStatusChanged,
     onReprint: reprintAutomaticProduct,
     onRetryPrintJob: retryAutomaticPrintJob,
-  };
-
-  const changeMockPrintFailure = (templateId: string | null) => {
-    mockPrintFailureRef.current = templateId;
-    setMockPrintFailureTemplateId(templateId);
+    onMarkPrintJobCompleted: markAutomaticPrintJobCompleted,
   };
 
   return (
@@ -546,8 +543,6 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
                   {import.meta.env.DEV && isAutomaticRegistrationEnabled && registrationState === "idle" && (
                     <MockQrInput
                       disabled={automaticRegistrationMutation.isPending}
-                      printFailureTemplateId={mockPrintFailureTemplateId}
-                      onPrintFailureChange={changeMockPrintFailure}
                       onSubmit={startAutomaticRegistration}
                     />
                   )}

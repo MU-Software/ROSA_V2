@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { REGISTRATION_STATES } from "../domain";
 import { orderProductRelationSchema } from "../schemas/order";
+import { printJobExecutionSchema } from "../schemas/printing";
 
 export const APP_STATE_STORAGE_KEY = "rosa.app-state";
 
@@ -10,6 +11,7 @@ export const persistedAppStateSchema = z.object({
   farewell_until: z.number().nullable(),
   automatic_registration_enabled: z.boolean(),
   active_order_product_scancode: z.string().nullable(),
+  print_job_executions: z.array(printJobExecutionSchema),
 });
 
 export type PersistedAppState = z.infer<typeof persistedAppStateSchema>;
@@ -20,6 +22,7 @@ export const DEFAULT_PERSISTED_APP_STATE: PersistedAppState = {
   farewell_until: null,
   automatic_registration_enabled: false,
   active_order_product_scancode: null,
+  print_job_executions: [],
 };
 
 export const parsePersistedAppState = (value: unknown): PersistedAppState =>
@@ -30,9 +33,16 @@ export const loadPersistedAppState = (): PersistedAppState => {
 
   try {
     const stored = localStorage.getItem(APP_STATE_STORAGE_KEY);
-    return stored
+    const state = stored
       ? parsePersistedAppState(JSON.parse(stored) as unknown)
       : DEFAULT_PERSISTED_APP_STATE;
+    return {
+      ...state,
+      print_job_executions: state.print_job_executions.map((execution) =>
+        execution.status === "printing"
+          ? { ...execution, status: "waiting", error: null, completion_confirmed: null }
+          : execution),
+    };
   } catch {
     return DEFAULT_PERSISTED_APP_STATE;
   }

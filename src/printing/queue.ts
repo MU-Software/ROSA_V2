@@ -5,6 +5,7 @@ import {
   findBuiltInBadgeTemplate,
   selectBadgeTemplate,
 } from "./templates";
+export type { PrintJobExecution, PrintJobExecutionStatus } from "../schemas/printing";
 
 export const DEFAULT_BADGE_TEMPLATE_ID = DEFAULT_BADGE_TEMPLATE.template_id;
 export const DEFAULT_EXCHANGE_VOUCHER_TEMPLATE_ID = "registration.exchange-voucher.default";
@@ -17,16 +18,6 @@ export type PrintJob<TData = unknown> = {
 export type PrintQueueEntry<TData = unknown> = {
   id: string;
   job: PrintJob<TData>;
-};
-
-export type PrintJobExecutionStatus = "waiting" | "printing" | "completed" | "failed";
-
-export type PrintJobExecution = {
-  id: string;
-  template_id: string;
-  status: PrintJobExecutionStatus;
-  error: string | null;
-  completion_confirmed: boolean | null;
 };
 
 export type PrintJobCompletion = {

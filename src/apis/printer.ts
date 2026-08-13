@@ -666,7 +666,10 @@ export class PrinterManager {
       const asked = Date.now();
       try {
         await connection.session.write(probe.request);
-        const reply = await connection.session.read(probe.length, probe.intervalMs);
+        const reply = await connection.session.read(
+          probe.length,
+          probe.responseTimeoutMs ?? probe.intervalMs,
+        );
         if (!judge || (await judge(reply))) return;
       } catch (err) {
         // 무응답 = 아직 인쇄 중. 그 밖의 실패는 다시 물어도 소용없다.

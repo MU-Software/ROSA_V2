@@ -63,8 +63,10 @@ export type PrinterAction = {
 export type CompletionProbe = {
   request: Uint8Array;
   length: number;
-  /** 다시 물어보기까지의 간격이자 한 번의 응답을 기다리는 시간. */
+  /** 다시 물어보기까지의 간격. */
   intervalMs: number;
+  /** 한 번의 응답을 기다리는 시간. 생략하면 intervalMs를 쓴다. */
+  responseTimeoutMs?: number;
   /** 없으면 응답이 온 것 자체를 완료로 본다. 잡마다 새 판정기를 만든다. */
   createJudge?(): (reply: Uint8Array) => Promise<boolean> | boolean;
 };

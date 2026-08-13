@@ -64,6 +64,7 @@ export const BROTHER_QL_820NWB: PrinterProfile = {
     request: RCPT.BROTHER_STATUS_REQUEST,
     length: RCPT.BROTHER_STATUS_LEN,
     intervalMs: 250,
+    responseTimeoutMs: 5000,
     createJudge: () => brotherFinished,
   },
 

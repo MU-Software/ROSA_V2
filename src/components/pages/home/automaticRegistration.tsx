@@ -17,7 +17,6 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  MenuItem,
   Paper,
   Stack,
   TextField,
@@ -32,8 +31,6 @@ import type { RegistrationDeskGateway } from "../../../gateways";
 import { useOrderProductQuery } from "../../../hooks/useRegistrationDesk";
 import {
   createRegistrationPrintQueue,
-  DEFAULT_BADGE_TEMPLATE_ID,
-  DEFAULT_EXCHANGE_VOUCHER_TEMPLATE_ID,
   getPrintTemplateLabel,
   type PrintJobExecution,
   type PrintJobExecutionStatus,
@@ -57,6 +54,7 @@ export type AutomaticProductDetailsController = {
     product: OrderProductRelation,
     printJobId: string,
   ) => Promise<readonly PrintJobExecution[]>;
+  onMarkPrintJobCompleted: (product: OrderProductRelation, printJobId: string) => void;
 };
 
 type ProcessStatus = Exclude<PrintJobExecutionStatus, "failed">;
@@ -112,7 +110,6 @@ export const AutomaticRegistrationPanel: FC<{
     registration_state: registrationState,
   } = useAppContext();
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [reprintRequired, setReprintRequired] = useState(false);
   const ready = registrationState === "awaiting_completion";
   const printQueue = product ? createRegistrationPrintQueue(product).snapshot() : [];
   const executionById = new Map(progress.print_jobs.map((execution) => [execution.id, execution]));
@@ -122,17 +119,10 @@ export const AutomaticRegistrationPanel: FC<{
   const hasPrintFailures = progress.print_jobs.some(({ status }) => status === "failed");
   const productUpdated = (updatedProduct: OrderProductRelation) => {
     details.onProductUpdated(updatedProduct);
-    setReprintRequired(true);
-  };
-  const reprint = async (updatedProduct: OrderProductRelation) => {
-    const executions = await details.onReprint(updatedProduct);
-    setReprintRequired(!allPrintJobsCompleted(executions));
-    return executions;
   };
   const retryPrintJob = async (printJobId: string) => {
     if (!product) return;
-    const executions = await details.onRetryPrintJob(product, printJobId);
-    if (allPrintJobsCompleted(executions)) setReprintRequired(false);
+    await details.onRetryPrintJob(product, printJobId);
   };
 
   return (
@@ -256,14 +246,24 @@ export const AutomaticRegistrationPanel: FC<{
                   spacing={1}
                   sx={{ alignItems: "center", justifyContent: "flex-end" }}
                 >
-                  {status === "failed" && (
-                    <Button
-                      size="small"
-                      disabled={progress.processing || details.reprinting}
-                      onClick={() => void retryPrintJob(entry.id)}
-                    >
-                      다시 출력
-                    </Button>
+                  {ready && status !== "completed" && (
+                    <>
+                      <Button
+                        size="small"
+                        disabled={progress.processing || details.reprinting}
+                        onClick={() => void retryPrintJob(entry.id)}
+                      >
+                        {status === "failed" ? "다시 출력" : "출력"}
+                      </Button>
+                      <Button
+                        size="small"
+                        color="inherit"
+                        disabled={progress.processing || details.reprinting}
+                        onClick={() => details.onMarkPrintJobCompleted(product, entry.id)}
+                      >
+                        출력 완료로 표시
+                      </Button>
+                    </>
                   )}
                   <Chip size="small" color={presentation.color} label={presentation.label} />
                 </Stack>
@@ -277,15 +277,15 @@ export const AutomaticRegistrationPanel: FC<{
         {ready && (
           hasPrintFailures ? (
             <Alert severity="error">
-              출력 실패가 남아 있어 접수를 완료할 수 없습니다. 실패한 항목만 다시 출력해주세요.
+              출력 실패가 남아 있습니다. 다시 출력하거나 실물 출력이 완료됐다면 완료로 표시해주세요.
             </Alert>
-          ) : reprintRequired ? (
+          ) : !printJobsCompleted ? (
             <Alert severity="warning">
-              참가자 정보가 변경되었습니다. 최신 정보로 다시 출력해야 접수를 완료할 수 있습니다.
+              출력 대기 항목을 출력하거나 이미 출력된 항목을 완료로 표시해주세요.
             </Alert>
           ) : (
             <Alert severity="info">
-              현재는 UI 검토를 위한 모의 출력 결과입니다. 실제 프린터 연동은 장치 단계에서 적용됩니다.
+              실제 출력물과 참가자를 확인한 뒤 접수를 완료해주세요.
             </Alert>
           )
         )}
@@ -293,8 +293,7 @@ export const AutomaticRegistrationPanel: FC<{
         <Button
           variant="contained"
           size="large"
-          disabled={!ready || progress.processing || details.reprinting || reprintRequired ||
-            !printJobsCompleted}
+          disabled={!ready || progress.processing || details.reprinting || !printJobsCompleted}
           onClick={onComplete}
           sx={{ minHeight: 52 }}
         >
@@ -311,7 +310,6 @@ export const AutomaticRegistrationPanel: FC<{
           details={{
             ...details,
             onProductUpdated: productUpdated,
-            onReprint: reprint,
           }}
           onClose={() => setDetailsOpen(false)}
         />
@@ -536,10 +534,8 @@ export const AutomaticModeBanner: FC<{
 
 export const MockQrInput: FC<{
   disabled: boolean;
-  printFailureTemplateId: string | null;
-  onPrintFailureChange: (templateId: string | null) => void;
   onSubmit: (value: string) => void;
-}> = ({ disabled, printFailureTemplateId, onPrintFailureChange, onSubmit }) => {
+}> = ({ disabled, onSubmit }) => {
   const [value, setValue] = useState("");
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -569,19 +565,6 @@ export const MockQrInput: FC<{
         >
           인식
         </Button>
-        <TextField
-          select
-          size="small"
-          label="다음 모의 출력"
-          value={printFailureTemplateId ?? ""}
-          disabled={disabled}
-          onChange={(event) => onPrintFailureChange(event.target.value || null)}
-          sx={{ minWidth: 180 }}
-        >
-          <MenuItem value="">모두 성공</MenuItem>
-          <MenuItem value={DEFAULT_BADGE_TEMPLATE_ID}>명찰 1회 실패</MenuItem>
-          <MenuItem value={DEFAULT_EXCHANGE_VOUCHER_TEMPLATE_ID}>교환권 1회 실패</MenuItem>
-        </TextField>
       </Stack>
     </Box>
   );
