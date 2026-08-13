@@ -37,41 +37,81 @@ X-GNOME-Autostart-enabled=true
 EOF
 systemctl --user daemon-reload
 
+say "등록 데스크에 필요 없는 데몬 정리"
+# 부팅 직후 SD 카드 I/O 를 잡아먹고, 행사 중에 뒤에서 apt 가 도는 것도 막는다.
+# ROSA 는 libusb 로 프린터를 직접 열기 때문에 CUPS 를 쓰지 않는다.
+# e2scrub 은 LVM 스냅숏 검사라 LVM 이 없으면 할 일이 없다.
+for unit in \
+  ModemManager.service \
+  cups.service cups.socket cups.path cups-browsed.service \
+  e2scrub_reap.service \
+  apt-daily.timer apt-daily-upgrade.timer
+do
+  if sudo systemctl disable --now "$unit" >/dev/null 2>&1; then
+    echo "  껐습니다: $unit"
+  else
+    echo "  없거나 이미 꺼져 있습니다: $unit"
+  fi
+done
+# PackageKit 은 static 이라 끌 수 없고 D-Bus 로 언제든 깨어난다.
+if sudo systemctl mask packagekit.service >/dev/null 2>&1; then
+  echo "  막았습니다: packagekit.service"
+fi
+# rpi-connect 는 남긴다. 현장에서 원격으로 손볼 수단이 필요하다.
+
 say "자동 로그인과 화면 절전"
 sudo raspi-config nonint do_boot_behaviour B4
 sudo raspi-config nonint do_blanking 1
 
-RC="$HOME/.config/labwc/rc.xml"
-say "창을 다른 모니터로 옮기는 단축키 (Super+O)"
-if [ ! -f "$RC" ]; then
-  mkdir -p "$(dirname "$RC")"
-  cat > "$RC" <<'EOF'
-<?xml version="1.0"?>
-<openbox_config xmlns="http://openbox.org/3.4/rc">
-  <keyboard>
-    <keybind key="W-o">
+say "창 배치 규칙과 단축키 (Super+O)"
+# labwc 는 찾은 첫 rc.xml 하나만 읽는다. 사용자 파일을 새로 만들면 시스템 설정이 통째로
+# 사라지므로 — 테마, Ctrl+Alt+Del 종료, 전원 버튼, 볼륨 키까지 — 그것을 복사해서 시작한다.
+python3 - "$HOME/.config/labwc/rc.xml" <<'EOF'
+import pathlib, shutil, sys
+
+rc = pathlib.Path(sys.argv[1])
+system_rc = pathlib.Path("/etc/xdg/labwc/rc.xml")
+
+if not rc.exists():
+    rc.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(system_rc, rc)
+    print(f"시스템 설정을 복사했습니다: {rc}")
+
+text = rc.read_text()
+if "MoveToOutput" in text:
+    print("이미 들어 있습니다")
+    raise SystemExit
+
+keybind = """    <keybind key="W-o">
       <action name="ToggleFullscreen"/>
       <action name="MoveToOutput" direction="right" wrap="yes"/>
       <action name="ToggleFullscreen"/>
     </keybind>
-  </keyboard>
-</openbox_config>
-EOF
-  echo "만들었습니다: $RC"
-elif grep -q MoveToOutput "$RC"; then
-  echo "이미 있습니다: $RC"
-else
-  echo "$RC 가 이미 있어 건드리지 않았습니다. 아래를 직접 넣으세요."
-  cat <<'EOF'
-  <keyboard>
-    <keybind key="W-o">
-      <action name="ToggleFullscreen"/>
+"""
+if "<keyboard>" in text:
+    text = text.replace("<keyboard>", "<keyboard>\n" + keybind, 1)
+else:
+    text = text.replace(
+        "</openbox_config>", "  <keyboard>\n" + keybind + "  </keyboard>\n</openbox_config>", 1
+    )
+
+# Wayland 에서는 앱이 자기 창의 출력을 고를 수 없다. 외부 화면을 주 창과 다른 모니터로
+# 보내고 전체화면으로 만드는 일은 컴포지터가 한다. 출력 이름은 기기마다 달라 방향으로 쓴다.
+rule = """    <windowRule title="ROSA 외부 화면" matchOnce="false">
       <action name="MoveToOutput" direction="right" wrap="yes"/>
       <action name="ToggleFullscreen"/>
-    </keybind>
-  </keyboard>
+    </windowRule>
+"""
+if "<windowRules>" in text:
+    text = text.replace("<windowRules>", "<windowRules>\n" + rule, 1)
+else:
+    text = text.replace(
+        "</openbox_config>", "  <windowRules>\n" + rule + "  </windowRules>\n</openbox_config>", 1
+    )
+
+rc.write_text(text)
+print(f"창 규칙과 단축키를 넣었습니다: {rc}")
 EOF
-fi
 
 if [ -n "$HOSTNAME_NEW" ]; then
   say "호스트명 $HOSTNAME_NEW"
