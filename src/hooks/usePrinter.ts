@@ -15,7 +15,13 @@ export function usePrinterDevices(): PrinterDevice[] {
 
 export function useRegisteredPrinterDevices(): PrinterDevice[] {
   const [devices, setDevices] = useState<PrinterDevice[]>(() => printerManager.listRegisteredDevices());
-  useEffect(() => printerManager.onChange(() => setDevices(printerManager.listRegisteredDevices())), []);
+  useEffect(() => {
+    const unsubscribe = printerManager.onChange(() => setDevices(printerManager.listRegisteredDevices()));
+    void printerManager.refresh().catch((reason: unknown) => {
+      console.error("Failed to refresh registered printers:", reason);
+    });
+    return unsubscribe;
+  }, []);
   return devices;
 }
 

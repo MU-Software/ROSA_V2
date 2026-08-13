@@ -8,13 +8,16 @@ import {
   DialogContent,
   DialogTitle,
   Divider,
+  MenuItem,
   Paper,
   Stack,
+  TextField,
   ToggleButton,
   ToggleButtonGroup,
   Typography,
 } from "@mui/material";
-import { useState, type FC } from "react";
+import { useRef, useState, type FC } from "react";
+import { printerManager, type PrinterDevice } from "../../../apis/printer";
 import { PrintTemplateRenderer } from "../../printing/templateRenderer";
 import {
   getPaidOptionExchangeTargets,
@@ -22,13 +25,55 @@ import {
   type OrderProductRelation,
 } from "../../../domain";
 import { selectBadgeTemplate } from "../../../printing/templates";
-import type { TemplateLayoutType } from "../../../printing/templateDocument";
+import { rasterizeTemplate } from "../../../printing/templateRaster";
+import {
+  selectTemplateLayoutType,
+  type TemplateBindingValues,
+  type TemplateLayoutType,
+} from "../../../printing/templateDocument";
+import { usePrintMutation } from "../../../hooks/usePrintMutation";
+import { useRegisteredPrinterDevices } from "../../../hooks/usePrinter";
+
+const printerLabel = (device: PrinterDevice): string =>
+  `${device.name} · ${device.transport.toUpperCase()}`;
 
 const BadgePreview: FC<{ product: OrderProductRelation }> = ({ product }) => {
   const [layoutType, setLayoutType] = useState<TemplateLayoutType>("wide");
+  const [selectedPrinterKey, setSelectedPrinterKey] = useState("");
+  const [printMessage, setPrintMessage] = useState<string>();
+  const widePrintRef = useRef<HTMLDivElement>(null);
+  const compactPrintRef = useRef<HTMLDivElement>(null);
+  const printers = useRegisteredPrinterDevices();
+  const printMutation = usePrintMutation();
   const ticket = product.ticket_info;
   if (!ticket) return null;
   const template = selectBadgeTemplate(product);
+  const values: TemplateBindingValues = {
+    "ticket.name": ticket.name,
+    "ticket.organization": ticket.organization ?? undefined,
+    "badge.role_label": template.role_label,
+  };
+  const selectedPrinter = printers.find(({ key }) => key === selectedPrinterKey) ?? printers[0];
+
+  const printBadge = async () => {
+    if (!selectedPrinter) return;
+    setPrintMessage(undefined);
+    try {
+      if (!printerManager.isConnected(selectedPrinter.key)) {
+        await printerManager.connect(selectedPrinter.key);
+      }
+      const { width, height } = printerManager.imageSize(selectedPrinter.key);
+      if (!height) throw new Error("프린터 라벨 높이가 설정되지 않았습니다");
+      const printLayoutType = selectTemplateLayoutType(width, height);
+      const element = printLayoutType === "wide" ? widePrintRef.current : compactPrintRef.current;
+      if (!element) throw new Error("명찰 템플릿을 준비하지 못했습니다");
+      const image = await rasterizeTemplate(element, width, height);
+      const result = await printMutation.mutateAsync({ device: selectedPrinter, image });
+      setPrintMessage(result.completionConfirmed ? "명찰 출력을 완료했습니다." : "명찰을 프린터로 전송했습니다.");
+    } catch (reason) {
+      setPrintMessage(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
 
   return (
     <Stack spacing={1}>
@@ -70,13 +115,56 @@ const BadgePreview: FC<{ product: OrderProductRelation }> = ({ product }) => {
         <PrintTemplateRenderer
           document={template.document}
           layoutType={layoutType}
-          values={{
-            "ticket.name": ticket.name,
-            "ticket.organization": ticket.organization ?? undefined,
-            "badge.role_label": template.role_label,
-          }}
+          values={values}
         />
       </Paper>
+      <Box
+        aria-hidden
+        sx={{ position: "fixed", left: -10000, top: 0, width: 900, pointerEvents: "none" }}
+      >
+        <PrintTemplateRenderer
+          document={template.document}
+          layoutType="wide"
+          values={values}
+          rootRef={widePrintRef}
+          showQrPlaceholder={false}
+        />
+        <PrintTemplateRenderer
+          document={template.document}
+          layoutType="compact"
+          values={values}
+          rootRef={compactPrintRef}
+          showQrPlaceholder={false}
+        />
+      </Box>
+      {printers.length === 0 ? (
+        <Alert severity="warning">장치 진단에서 명찰 프린터를 먼저 등록해주세요.</Alert>
+      ) : (
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+          <TextField
+            select
+            size="small"
+            label="명찰 프린터"
+            value={selectedPrinter?.key ?? ""}
+            onChange={(event) => setSelectedPrinterKey(event.target.value)}
+            sx={{ flex: 1 }}
+          >
+            {printers.map((printer) => (
+              <MenuItem key={printer.key} value={printer.key}>{printerLabel(printer)}</MenuItem>
+            ))}
+          </TextField>
+          <Button
+            variant="contained"
+            disabled={!selectedPrinter || printMutation.isPending}
+            onClick={() => void printBadge()}
+          >
+            {printMutation.isPending ? "출력 중…" : "명찰 출력"}
+          </Button>
+        </Stack>
+      )}
+      {printMessage && (
+        <Alert severity={printMutation.error ? "error" : "success"}>{printMessage}</Alert>
+      )}
     </Stack>
   );
 };

@@ -1,6 +1,6 @@
 import { QrCode2 } from "@mui/icons-material";
 import { Box, Stack, Typography } from "@mui/material";
-import { useLayoutEffect, useRef, type FC } from "react";
+import { useLayoutEffect, useRef, type FC, type Ref } from "react";
 import type {
   PrintTemplateDocument,
   PrintTemplateElement,
@@ -96,12 +96,15 @@ export const PrintTemplateRenderer: FC<{
   document: PrintTemplateDocument;
   layoutType: TemplateLayoutType;
   values: TemplateBindingValues;
-}> = ({ document, layoutType, values }) => {
+  rootRef?: Ref<HTMLDivElement>;
+  showQrPlaceholder?: boolean;
+}> = ({ document, layoutType, values, rootRef, showQrPlaceholder = true }) => {
   const layout = document.layouts[layoutType];
   const media = getOrientedTemplateMedia(document, layoutType);
 
   return (
     <Box
+      ref={rootRef}
       data-template-id={document.template_id}
       sx={{
         position: "relative",
@@ -128,6 +131,7 @@ export const PrintTemplateRenderer: FC<{
         } as const;
 
         if (element.kind === "qr") {
+          if (!showQrPlaceholder) return null;
           const scancode = values[element.binding];
           return (
             <Box

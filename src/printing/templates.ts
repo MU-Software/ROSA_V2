@@ -1,5 +1,5 @@
 import type { OrderProductRelation } from "../domain";
-import pyconLogoUrl from "../assets/pycon_logo.png";
+import pyconLogoUrl from "../assets/pycon_logo_monochrome.svg";
 import {
   printTemplateDocumentSchema,
   type PrintTemplateDocument,
@@ -52,8 +52,8 @@ const createBadgeTemplate = (
           {
             id: "event-logo",
             kind: "image",
-            frame: { x_mm: 3, y_mm: 10, width_mm: 14, height_mm: 14 },
-            source: { type: "binding", binding: "event.logo", fallback: pyconLogoUrl },
+            frame: { x_mm: 1, y_mm: 10, width_mm: 14, height_mm: 14 },
+            source: { type: "literal", value: pyconLogoUrl },
           },
           {
             id: "name",
@@ -96,7 +96,7 @@ const createBadgeTemplate = (
           {
             id: "scancode",
             kind: "qr",
-            frame: { x_mm: 70, y_mm: 4, width_mm: 17, height_mm: 30 },
+            frame: { x_mm: 72, y_mm: 4, width_mm: 17, height_mm: 30 },
             binding: "order_product.scancode",
           },
         ],
@@ -107,8 +107,8 @@ const createBadgeTemplate = (
           {
             id: "event-logo",
             kind: "image",
-            frame: { x_mm: 2, y_mm: 20.5, width_mm: 7.5, height_mm: 7.5 },
-            source: { type: "binding", binding: "event.logo", fallback: pyconLogoUrl },
+            frame: { x_mm: 1, y_mm: 20.5, width_mm: 7.5, height_mm: 7.5 },
+            source: { type: "literal", value: pyconLogoUrl },
           },
           {
             id: "name",
@@ -151,7 +151,7 @@ const createBadgeTemplate = (
           {
             id: "scancode",
             kind: "qr",
-            frame: { x_mm: 29, y_mm: 6, width_mm: 9, height_mm: 18 },
+            frame: { x_mm: 30, y_mm: 6, width_mm: 9, height_mm: 18 },
             binding: "order_product.scancode",
           },
         ],
