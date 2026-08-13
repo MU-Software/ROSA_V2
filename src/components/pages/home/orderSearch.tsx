@@ -15,6 +15,7 @@ import {
   DialogTitle,
   Divider,
   IconButton,
+  Pagination,
   Paper,
   Stack,
   TextField,
@@ -35,6 +36,7 @@ import {
 } from "../../../domain";
 import type { RegistrationDeskGateway } from "../../../gateways";
 import {
+  ORDER_SEARCH_PAGE_SIZE,
   useOrderProductQuery,
   useOrderSearchFetching,
   useOrderSearchQuery,
@@ -208,6 +210,7 @@ export const OrderSearchWorkspace: FC<{
             ) : submittedQuery ? (
               <QueryBoundary resetKeys={[submittedQuery]}>
                 <OrderSearchQueryContent
+                  key={submittedQuery}
                   gateway={gateway}
                   query={submittedQuery}
                   selectedOrderId={selectedOrderId}
@@ -237,13 +240,14 @@ const OrderProductDetailsQuery: FC<{
 
   useEffect(() => {
     setAppContext((current) => current.order_product_relation?.id === productId
-      ? { ...current, order_product_relation: data.order_product_relation }
+      ? { ...current, order_product_relation: data }
       : current);
-  }, [data.order_product_relation, productId, setAppContext]);
+  }, [data, productId, setAppContext]);
 
   return (
     <OrderProductDetails
-      product={data.order_product_relation}
+      orderId={data.order.id}
+      product={data}
       gateway={gateway}
       navigation={{ orderName: orderName ?? data.order.name, backLabel, onBack }}
     />
@@ -267,8 +271,9 @@ const OrderSearchQueryContent: FC<{
   onBack,
   onSelectProduct,
 }) => {
-  const { data: orders } = useOrderSearchQuery(gateway, query);
-  const selectedOrder = orders.find(({ id }) => id === selectedOrderId) ?? null;
+  const [page, setPage] = useState(1);
+  const { data } = useOrderSearchQuery(gateway, query, page);
+  const selectedOrder = data.results.find(({ id }) => id === selectedOrderId) ?? null;
   const refundMutation = useRefundOrderMutation(gateway);
 
   return selectedOrder ? (
@@ -283,29 +288,33 @@ const OrderSearchQueryContent: FC<{
     />
   ) : (
     <OrderSearchResults
-      orders={orders}
+      page={page}
+      result={data}
       onReset={onReset}
       onSelect={(order) => onSelectOrder(order.id)}
+      onPageChange={setPage}
     />
   );
 };
 
 const OrderSearchResults: FC<{
-  orders: Order[];
+  page: number;
+  result: { count: number; results: Order[] };
   onReset: () => void;
   onSelect: (order: Order) => void;
-}> = ({ orders, onReset, onSelect }) => (
+  onPageChange: (page: number) => void;
+}> = ({ page, result, onReset, onSelect, onPageChange }) => (
   <Stack sx={{ flex: 1, minHeight: 0 }}>
     <Stack
       direction="row"
       spacing={1}
       sx={{ px: { xs: 2, md: 3 }, py: 1.5, alignItems: "center", justifyContent: "space-between" }}
     >
-      <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>검색 결과 {orders.length}건</Typography>
+      <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>검색 결과 {result.count}건</Typography>
       <Button size="small" startIcon={<Clear />} onClick={onReset}>초기화</Button>
     </Stack>
     <Divider />
-    {orders.length === 0 ? (
+    {result.results.length === 0 ? (
       <Box sx={{ flex: 1, minHeight: 240, display: "grid", placeItems: "center", p: 3 }}>
         <Stack spacing={1} sx={{ textAlign: "center" }}>
           <Typography variant="h6">검색 결과가 없습니다.</Typography>
@@ -315,10 +324,20 @@ const OrderSearchResults: FC<{
         </Stack>
       </Box>
     ) : (
-      <Stack divider={<Divider flexItem />} sx={{ overflowY: "auto" }}>
-        {orders.map((order) => (
-          <OrderSearchResult key={order.id} order={order} onSelect={() => onSelect(order)} />
-        ))}
+      <Stack sx={{ overflowY: "auto" }}>
+        <Stack divider={<Divider flexItem />}>
+          {result.results.map((order) => (
+            <OrderSearchResult key={order.id} order={order} onSelect={() => onSelect(order)} />
+          ))}
+        </Stack>
+        {result.count > ORDER_SEARCH_PAGE_SIZE && (
+          <Pagination
+            page={page}
+            count={Math.ceil(result.count / ORDER_SEARCH_PAGE_SIZE)}
+            onChange={(_event, nextPage) => onPageChange(nextPage)}
+            sx={{ p: 2, alignSelf: "center" }}
+          />
+        )}
       </Stack>
     )}
   </Stack>
@@ -385,7 +404,7 @@ const OrderDetails: FC<{
   refunding: boolean;
   refundError: string | null;
   onClearRefundError: () => void;
-  onRefund: (otp: string) => Promise<Order>;
+  onRefund: (otp: string) => Promise<void>;
 }> = ({
   order,
   onBack,

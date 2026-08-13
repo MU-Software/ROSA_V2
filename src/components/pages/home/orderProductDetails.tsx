@@ -65,6 +65,7 @@ export type OrderProductDetailsNavigation = {
 };
 
 export const OrderProductDetails: FC<{
+  orderId: EntityId;
   product: OrderProductRelation;
   gateway: RegistrationDeskGateway;
   navigation?: OrderProductDetailsNavigation;
@@ -76,6 +77,7 @@ export const OrderProductDetails: FC<{
   onStatusChanged?: (product: OrderProductRelation) => void;
   printAction?: OrderProductPrintAction;
 }> = ({
+  orderId,
   product,
   gateway,
   navigation,
@@ -96,8 +98,8 @@ export const OrderProductDetails: FC<{
   const getUpdatedProduct = () => {
     const lookup = registrationDeskQueryClient.getOrderProduct(product.id);
     if (!lookup) throw new Error("수정된 주문상품을 찾을 수 없습니다.");
-    onProductUpdated?.(lookup.order_product_relation);
-    return lookup.order_product_relation;
+    onProductUpdated?.(lookup);
+    return lookup;
   };
   const modifyOptionMutation = useModifyOrderProductMutation(gateway);
   const modifyStatusMutation = useModifyOrderProductMutation(gateway);
@@ -137,6 +139,7 @@ export const OrderProductDetails: FC<{
   const saveOption = async (optionId: EntityId) => {
     try {
       await modifyOptionMutation.mutateAsync({
+        order_id: orderId,
         order_product_relation_id: product.id,
         options: [{ id: optionId, custom_response: customResponse.trim() || null }],
       });
@@ -158,6 +161,7 @@ export const OrderProductDetails: FC<{
     if (!nextStatus) return;
     try {
       await modifyStatusMutation.mutateAsync({
+        order_id: orderId,
         order_product_relation_id: product.id,
         status: nextStatus,
       });
@@ -277,9 +281,6 @@ export const OrderProductDetails: FC<{
               <Typography variant="body2" color="text.secondary">
                 {[ticket.email, ticket.phone].filter(Boolean).join(" · ")}
               </Typography>
-              {ticket.contribution_message && (
-                <Typography variant="body2" sx={{ mt: 1.5 }}>{ticket.contribution_message}</Typography>
-              )}
             </Paper>
           </Stack>
         )}
@@ -443,6 +444,7 @@ export const OrderProductDetails: FC<{
           error={modifyTicketInfoMutation.error?.message ?? null}
           onSave={async (ticketInfo: TicketInfo) => {
             await modifyTicketInfoMutation.mutateAsync({
+              order_id: orderId,
               order_product_relation_id: product.id,
               ticket_info: ticketInfo,
             });

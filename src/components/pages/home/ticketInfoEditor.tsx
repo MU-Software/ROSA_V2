@@ -38,7 +38,6 @@ export const TicketInfoEditor: FC<{
         phone: ticketInfo.phone.trim(),
         email: ticketInfo.email.trim(),
         organization: ticketInfo.organization?.trim() || null,
-        contribution_message: ticketInfo.contribution_message?.trim() || null,
       });
     } catch {
       return;
@@ -114,18 +113,6 @@ export const TicketInfoEditor: FC<{
                 }))}
               />
             </Box>
-            <TextField
-              multiline
-              minRows={3}
-              fullWidth
-              label="기여 메시지"
-              value={ticketInfo.contribution_message ?? ""}
-              disabled={saving}
-              onChange={(event) => setTicketInfo((current) => ({
-                ...current,
-                contribution_message: event.target.value,
-              }))}
-            />
           </Stack>
         </DialogContent>
         <DialogActions>

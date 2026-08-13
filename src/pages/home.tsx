@@ -61,19 +61,22 @@ import {
   type OrderProductRelation,
   type RegistrationState,
 } from "../domain";
-import type {
-  RegistrationDeskConfiguration,
-  RegistrationDeskGateway,
-} from "../gateways";
+import type { RegistrationDeskGateway } from "../gateways";
 import {
   useModifyOrderProductMutation,
   useRegistrationConfigurationQuery,
   useRegistrationDeskQueryClient,
   useRegistrationStatisticsQuery,
 } from "../hooks/useRegistrationDesk";
+import { usePrintQueue } from "../hooks/usePrintQueue";
 import { useQrScanner } from "../hooks/useQrScanner";
 import { useQrTrigger } from "../hooks/useQrTrigger";
-import { createRegistrationPrintQueue } from "../printing/queue";
+import {
+  createRegistrationPrintQueue,
+  getPrintTemplateLabel,
+  type PrintJobExecution,
+  type RegistrationPrintData,
+} from "../printing/queue";
 import { getQrInputMode } from "../utils/platform";
 
 const DEFAULT_FAREWELL_DURATION_MS = 3000;
@@ -127,38 +130,32 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
     useState<AutomaticRegistrationStage>("lookup");
   const [automaticFailureProduct, setAutomaticFailureProduct] =
     useState<OrderProductRelation | null>(null);
-  const [completedPrintJobIds, setCompletedPrintJobIds] = useState<string[]>([]);
-  const [printingPrintJobId, setPrintingPrintJobId] = useState<string | null>(null);
-  const [farewellDurationMs, setFarewellDurationMs] = useState(DEFAULT_FAREWELL_DURATION_MS);
-  const [automaticRegistrationAvailable, setAutomaticRegistrationAvailable] = useState(true);
+  const [mockPrintFailureTemplateId, setMockPrintFailureTemplateId] = useState<string | null>(null);
   const [closeDeskDialogOpen, setCloseDeskDialogOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const automaticRunRef = useRef(false);
+  const mockPrintFailureRef = useRef<string | null>(null);
+  const {
+    executions: printJobExecutions,
+    isPending: printOperationPending,
+    reset: resetPrintJobs,
+    run: runPrintJobs,
+  } = usePrintQueue<RegistrationPrintData>();
   const registrationDeskQueryClient = useRegistrationDeskQueryClient(gateway);
-  const applyConfiguration = useCallback((configuration: RegistrationDeskConfiguration) => {
-    setFarewellDurationMs(configuration.automatic_check_in.farewell_duration_ms);
-    setAutomaticRegistrationAvailable(configuration.automatic_check_in.enabled);
-    if (!configuration.automatic_check_in.enabled) {
-      setAppContext((current) => ({
-        ...current,
-        automatic_registration_enabled: false,
-        active_order_product_scancode: null,
-      }));
-    }
-  }, [setAppContext]);
-  const runMockPrintJobs = async (product: OrderProductRelation): Promise<void> => {
-    const queue = createRegistrationPrintQueue(product);
-    setCompletedPrintJobIds([]);
-    setPrintingPrintJobId(null);
-    let entry = queue.dequeue();
-    while (entry) {
-      const entryId = entry.id;
-      setPrintingPrintJobId(entryId);
+  const runMockPrintJobs = (
+    product: OrderProductRelation,
+    jobIds?: readonly string[],
+  ): Promise<readonly PrintJobExecution[]> => {
+    const entries = createRegistrationPrintQueue(product).snapshot();
+    return runPrintJobs(entries, async (entry) => {
       await new Promise<void>((resolve) => window.setTimeout(resolve, 400));
-      setCompletedPrintJobIds((current) => [...current, entryId]);
-      entry = queue.dequeue();
-    }
-    setPrintingPrintJobId(null);
+      if (mockPrintFailureRef.current === entry.job.template_id) {
+        mockPrintFailureRef.current = null;
+        setMockPrintFailureTemplateId(null);
+        throw new Error(`${getPrintTemplateLabel(entry.job.template_id)} 모의 출력에 실패했습니다.`);
+      }
+      return { completion_confirmed: true };
+    }, jobIds);
   };
   const automaticMarkUsedMutation = useModifyOrderProductMutation(gateway);
   const automaticRegistrationMutation = useMutation({
@@ -169,10 +166,10 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
       const scancode = parseOrderProductScancode(rawScancode);
       const lookup = await registrationDeskQueryClient.fetchOrderProductByScancode(scancode);
       registrationDeskQueryClient.setOrderProduct(lookup);
-      setAutomaticFailureProduct(lookup.order_product_relation);
+      setAutomaticFailureProduct(lookup);
       const unavailableReason = getAutomaticRegistrationUnavailableReason(
         lookup.order,
-        lookup.order_product_relation,
+        lookup,
       );
       if (unavailableReason) throw new Error(unavailableReason);
       setAppContext((current) => ({
@@ -180,19 +177,20 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
         registration_state: current.registration_state === "idle"
           ? transitionRegistration(current.registration_state, "registering")
           : current.registration_state,
-        order_product_relation: lookup.order_product_relation,
+        order_product_relation: lookup,
         farewell_until: null,
       }));
 
       setAutomaticRegistrationStage("marking_used");
       await automaticMarkUsedMutation.mutateAsync({
-        order_product_relation_id: lookup.order_product_relation.id,
+        order_id: lookup.order.id,
+        order_product_relation_id: lookup.id,
         status: "used",
       });
       const updatedLookup = await registrationDeskQueryClient.fetchOrderProduct(
-        lookup.order_product_relation.id,
+        lookup.id,
       );
-      const updatedProduct = updatedLookup.order_product_relation;
+      const updatedProduct = updatedLookup;
 
       setAutomaticRegistrationStage("printing");
       setAppContext((current) => ({
@@ -227,16 +225,13 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
       automaticRunRef.current = false;
     },
   });
-  const automaticReprintMutation = useMutation({
-    mutationFn: runMockPrintJobs,
-  });
   const scanner = useQrScanner();
   const { start: startScanner, status: scannerStatus, stop: stopScanner } = scanner;
   const qrInputMode = getQrInputMode();
   const presentation = REGISTRATION_STATE_PRESENTATION[registrationState];
   const isDeskOpen = registrationState !== "closed";
   const automaticOperationPending = automaticRegistrationMutation.isPending ||
-    automaticReprintMutation.isPending;
+    printOperationPending;
   const hasActiveAutomaticProduct = registrationProduct !== null ||
     automaticFailureProduct !== null;
   const isNarrow = useMediaQuery((theme: Theme) => theme.breakpoints.down("sm"));
@@ -263,18 +258,16 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
     automaticRunRef.current = true;
     setAppContext((current) => ({ ...current, active_order_product_scancode: value }));
     setAutomaticFailureProduct(null);
-    setCompletedPrintJobIds([]);
-    setPrintingPrintJobId(null);
-    automaticReprintMutation.reset();
+    resetPrintJobs();
     automaticRegistrationMutation.reset();
     automaticRegistrationMutation.mutate(value);
   }, [
     automaticRegistrationMutation,
-    automaticReprintMutation,
     activeOrderProductScancode,
     hasActiveAutomaticProduct,
     isAutomaticRegistrationEnabled,
     registrationState,
+    resetPrintJobs,
     setAppContext,
   ]);
 
@@ -320,9 +313,7 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
       active_order_product_scancode: null,
     }));
     setAutomaticFailureProduct(null);
-    setCompletedPrintJobIds([]);
-    setPrintingPrintJobId(null);
-    automaticReprintMutation.reset();
+    resetPrintJobs();
     automaticRegistrationMutation.reset();
   };
 
@@ -352,29 +343,30 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
         ...current,
         registration_state: transitionRegistration(current.registration_state, "idle"),
         order_product_relation: null,
-        farewell_until: Date.now() + farewellDurationMs,
+        farewell_until: Date.now() + DEFAULT_FAREWELL_DURATION_MS,
         active_order_product_scancode: null,
       };
     });
     automaticRegistrationMutation.reset();
     setAutomaticRegistrationStage("lookup");
-    setCompletedPrintJobIds([]);
-    setPrintingPrintJobId(null);
+    resetPrintJobs();
   };
 
   const dismissAutomaticRegistrationError = () => {
     setAppContext((current) => ({ ...current, active_order_product_scancode: null }));
     setAutomaticFailureProduct(null);
-    setCompletedPrintJobIds([]);
-    setPrintingPrintJobId(null);
-    automaticReprintMutation.reset();
+    resetPrintJobs();
     automaticRegistrationMutation.reset();
   };
 
-  const reprintAutomaticProduct = (product: OrderProductRelation): Promise<void> => {
-    automaticReprintMutation.reset();
-    return automaticReprintMutation.mutateAsync(product);
-  };
+  const reprintAutomaticProduct = (
+    product: OrderProductRelation,
+  ): Promise<readonly PrintJobExecution[]> => runMockPrintJobs(product);
+
+  const retryAutomaticPrintJob = (
+    product: OrderProductRelation,
+    printJobId: string,
+  ): Promise<readonly PrintJobExecution[]> => runMockPrintJobs(product, [printJobId]);
 
   const updateAutomaticProduct = (updatedProduct: OrderProductRelation) => {
     setAppContext((current) => current.order_product_relation?.id === updatedProduct.id
@@ -396,8 +388,7 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
       farewell_until: null,
     }));
     setAutomaticFailureProduct(null);
-    setCompletedPrintJobIds([]);
-    setPrintingPrintJobId(null);
+    resetPrintJobs();
     automaticRegistrationMutation.reset();
   };
 
@@ -412,15 +403,20 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
 
   const automaticProgress: AutomaticRegistrationProgress = {
     stage: automaticRegistrationStage,
-    processing: automaticRegistrationMutation.isPending,
-    completedPrintJobIds,
-    printingPrintJobId,
+    processing: automaticOperationPending,
+    print_jobs: printJobExecutions,
   };
   const automaticProductDetails: AutomaticProductDetailsController = {
-    reprinting: automaticReprintMutation.isPending,
+    reprinting: printOperationPending,
     onProductUpdated: updateAutomaticProduct,
     onStatusChanged: handleAutomaticStatusChanged,
     onReprint: reprintAutomaticProduct,
+    onRetryPrintJob: retryAutomaticPrintJob,
+  };
+
+  const changeMockPrintFailure = (templateId: string | null) => {
+    mockPrintFailureRef.current = templateId;
+    setMockPrintFailureTemplateId(templateId);
   };
 
   return (
@@ -437,7 +433,7 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
           <ListItemIcon><PowerSettingsNew fontSize="small" /></ListItemIcon>
           <ListItemText>{isDeskOpen ? "데스크 닫기" : "데스크 열기"}</ListItemText>
         </MenuItem>
-        {gateway && isDeskOpen && automaticRegistrationAvailable && (
+        {gateway && isDeskOpen && (
           <MenuItem
             disabled={automaticOperationPending}
             onClick={() => setAutomaticRegistrationMode(!isAutomaticRegistrationEnabled)}
@@ -487,7 +483,7 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
       <Container maxWidth="xl" sx={{ py: { xs: 2, md: 3 } }}>
         {gateway && (
           <QueryBoundary pendingFallback={null}>
-            <RegistrationConfigurationQuery gateway={gateway} onLoad={applyConfiguration} />
+            <RegistrationConfigurationQuery gateway={gateway} />
           </QueryBoundary>
         )}
         {isAutomaticRegistrationEnabled && (
@@ -539,6 +535,8 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
                   {import.meta.env.DEV && isAutomaticRegistrationEnabled && registrationState === "idle" && (
                     <MockQrInput
                       disabled={automaticRegistrationMutation.isPending}
+                      printFailureTemplateId={mockPrintFailureTemplateId}
+                      onPrintFailureChange={changeMockPrintFailure}
                       onSubmit={startAutomaticRegistration}
                     />
                   )}
@@ -577,11 +575,8 @@ export const HomePage: FC<{ gateway: RegistrationDeskGateway | null }> = ({ gate
 
 const RegistrationConfigurationQuery: FC<{
   gateway: RegistrationDeskGateway;
-  onLoad: (configuration: RegistrationDeskConfiguration) => void;
-}> = ({ gateway, onLoad }) => {
-  const { data } = useRegistrationConfigurationQuery(gateway);
-
-  useEffect(() => onLoad(data), [data, onLoad]);
+}> = ({ gateway }) => {
+  useRegistrationConfigurationQuery(gateway);
   return null;
 };
 

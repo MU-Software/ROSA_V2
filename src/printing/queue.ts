@@ -14,6 +14,24 @@ export type PrintQueueEntry<TData = unknown> = {
   job: PrintJob<TData>;
 };
 
+export type PrintJobExecutionStatus = "waiting" | "printing" | "completed" | "failed";
+
+export type PrintJobExecution = {
+  id: string;
+  template_id: string;
+  status: PrintJobExecutionStatus;
+  error: string | null;
+  completion_confirmed: boolean | null;
+};
+
+export type PrintJobCompletion = {
+  completion_confirmed: boolean;
+};
+
+export type PrintJobExecutor<TData = unknown> = (
+  entry: PrintQueueEntry<TData>,
+) => Promise<PrintJobCompletion>;
+
 export class PrintQueue<TData = unknown> {
   private readonly entries: PrintQueueEntry<TData>[] = [];
   private sequence = 0;

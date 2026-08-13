@@ -12,9 +12,11 @@ import type {
 } from "../domain";
 import type {
   ModifyOrderProductRequest,
-  OrderProductLookup,
   RefundOrderRequest,
+  RefundOrderProductRequest,
   RegistrationDeskGateway,
+  RegistrationDeskOrderProduct,
+  SearchOrdersParams,
 } from "../gateways";
 
 export const REGISTRATION_DESK_QUERY_KEYS = {
@@ -25,9 +27,14 @@ export const REGISTRATION_DESK_QUERY_KEYS = {
   CONFIGURATION: ["query", "registration-desk", "configuration"] as const,
 };
 
+export const ORDER_SEARCH_PAGE_SIZE = 50;
+
+const UUID_PATTERN = /^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i;
+
 const MUTATION_KEYS = {
   MODIFY_ORDER_PRODUCT: ["mutation", "registration-desk", "modify-order-product"] as const,
   REFUND_ORDER: ["mutation", "registration-desk", "refund-order"] as const,
+  REFUND_ORDER_PRODUCT: ["mutation", "registration-desk", "refund-order-product"] as const,
 };
 
 const ORDER_DATA_INVALIDATES = [
@@ -39,17 +46,34 @@ const ORDER_DATA_INVALIDATES = [
 const orderSearchQueryOptions = (
   gateway: RegistrationDeskGateway,
   query: string,
-) => queryOptions({
-  queryKey: [...REGISTRATION_DESK_QUERY_KEYS.ORDERS, "search", query],
-  queryFn: () => gateway.searchOrders({ query }),
-});
+  page: number,
+) => {
+  const params: SearchOrdersParams = UUID_PATTERN.test(query)
+    ? { order_id: query, page, page_size: ORDER_SEARCH_PAGE_SIZE }
+    : { keywords: query, page, page_size: ORDER_SEARCH_PAGE_SIZE };
+
+  return queryOptions({
+    queryKey: [...REGISTRATION_DESK_QUERY_KEYS.ORDERS, "search", query, page],
+    queryFn: () => gateway.searchOrders(params),
+  });
+};
+
+const getLookupResult = (
+  results: RegistrationDeskOrderProduct[],
+): RegistrationDeskOrderProduct => {
+  const lookup = results[0];
+  if (!lookup) throw new Error("주문상품을 찾을 수 없습니다.");
+  return lookup;
+};
 
 const orderProductQueryOptions = (
   gateway: RegistrationDeskGateway,
   id: EntityId,
 ) => queryOptions({
   queryKey: [...REGISTRATION_DESK_QUERY_KEYS.ORDER_PRODUCTS, id],
-  queryFn: () => gateway.getOrderProductRelation(id),
+  queryFn: async () => getLookupResult((await gateway.listOrderProducts({
+    order_product_relation_id: id,
+  })).results),
 });
 
 const orderProductScancodeQueryOptions = (
@@ -61,13 +85,16 @@ const orderProductScancodeQueryOptions = (
     "scancode",
     scancode.scancode_token,
   ],
-  queryFn: () => gateway.getOrderByProductScancode(scancode),
+  queryFn: async () => getLookupResult((await gateway.listOrderProducts({
+    scancode: scancode.scancode_token,
+  })).results),
 });
 
 export const useOrderSearchQuery = (
   gateway: RegistrationDeskGateway,
   query: string,
-) => useSuspenseQuery(orderSearchQueryOptions(gateway, query));
+  page: number,
+) => useSuspenseQuery(orderSearchQueryOptions(gateway, query, page));
 
 export const useOrderProductQuery = (
   gateway: RegistrationDeskGateway,
@@ -108,6 +135,14 @@ export const useRefundOrderMutation = (
   meta: { invalidates: ORDER_DATA_INVALIDATES },
 });
 
+export const useRefundOrderProductMutation = (
+  gateway: RegistrationDeskGateway,
+) => useMutation({
+  mutationKey: MUTATION_KEYS.REFUND_ORDER_PRODUCT,
+  mutationFn: (request: RefundOrderProductRequest) => gateway.refundOrderProduct(request),
+  meta: { invalidates: ORDER_DATA_INVALIDATES },
+});
+
 export const useOrderSearchFetching = (query: string | null): boolean =>
   useIsFetching({
     queryKey: query
@@ -135,19 +170,19 @@ export const useRegistrationDeskQueryClient = (
         const client = requireGateway();
         return queryClient.fetchQuery(orderProductScancodeQueryOptions(client, scancode));
       },
-      getOrderProduct: (id: EntityId): OrderProductLookup | undefined => {
+      getOrderProduct: (id: EntityId): RegistrationDeskOrderProduct | undefined => {
         const client = requireGateway();
         return queryClient.getQueryData(orderProductQueryOptions(client, id).queryKey);
       },
-      setOrderProduct: (lookup: OrderProductLookup) => {
+      setOrderProduct: (lookup: RegistrationDeskOrderProduct) => {
         const client = requireGateway();
         queryClient.setQueryData(
-          orderProductQueryOptions(client, lookup.order_product_relation.id).queryKey,
+          orderProductQueryOptions(client, lookup.id).queryKey,
           lookup,
         );
       },
       refetchOrderSearch: (query: string) => queryClient.invalidateQueries({
-        queryKey: orderSearchQueryOptions(requireGateway(), query).queryKey,
+        queryKey: [...REGISTRATION_DESK_QUERY_KEYS.ORDERS, "search", query],
       }),
     };
   }, [gateway, queryClient]);

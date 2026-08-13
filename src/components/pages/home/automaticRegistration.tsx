@@ -17,6 +17,7 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  MenuItem,
   Paper,
   Stack,
   TextField,
@@ -31,7 +32,11 @@ import type { RegistrationDeskGateway } from "../../../gateways";
 import { useOrderProductQuery } from "../../../hooks/useRegistrationDesk";
 import {
   createRegistrationPrintQueue,
+  DEFAULT_BADGE_TEMPLATE_ID,
+  DEFAULT_EXCHANGE_VOUCHER_TEMPLATE_ID,
   getPrintTemplateLabel,
+  type PrintJobExecution,
+  type PrintJobExecutionStatus,
 } from "../../../printing/queue";
 import { OrderProductDetails } from "./orderProductDetails";
 
@@ -40,18 +45,21 @@ export type AutomaticRegistrationStage = "lookup" | "marking_used" | "printing";
 export type AutomaticRegistrationProgress = {
   stage: AutomaticRegistrationStage;
   processing: boolean;
-  completedPrintJobIds: readonly string[];
-  printingPrintJobId: string | null;
+  print_jobs: readonly PrintJobExecution[];
 };
 
 export type AutomaticProductDetailsController = {
   reprinting: boolean;
   onProductUpdated: (product: OrderProductRelation) => void;
   onStatusChanged: (product: OrderProductRelation) => void;
-  onReprint: (product: OrderProductRelation) => Promise<unknown>;
+  onReprint: (product: OrderProductRelation) => Promise<readonly PrintJobExecution[]>;
+  onRetryPrintJob: (
+    product: OrderProductRelation,
+    printJobId: string,
+  ) => Promise<readonly PrintJobExecution[]>;
 };
 
-type PrintJobStatus = "waiting" | "printing" | "completed";
+type ProcessStatus = Exclude<PrintJobExecutionStatus, "failed">;
 
 const STAGE_LABELS: Record<AutomaticRegistrationStage, string> = {
   lookup: "주문상품을 확인하고 있습니다.",
@@ -66,16 +74,17 @@ const PRODUCT_STATUS_LABELS: Record<OrderProductRelation["status"], string> = {
   refunded: "환불",
 };
 
-const PRINT_JOB_STATUS_PRESENTATION: Record<PrintJobStatus, {
+const PRINT_JOB_STATUS_PRESENTATION: Record<PrintJobExecutionStatus, {
   label: string;
   color: ChipProps["color"];
 }> = {
   waiting: { label: "출력 대기", color: "default" },
   printing: { label: "출력 중", color: "info" },
   completed: { label: "출력 완료", color: "success" },
+  failed: { label: "출력 실패", color: "error" },
 };
 
-const PROCESS_STATUS_PRESENTATION: Record<PrintJobStatus, {
+const PROCESS_STATUS_PRESENTATION: Record<ProcessStatus, {
   label: string;
   color: ChipProps["color"];
 }> = {
@@ -84,19 +93,8 @@ const PROCESS_STATUS_PRESENTATION: Record<PrintJobStatus, {
   completed: { label: "완료", color: "success" },
 };
 
-const getPrintJobStatus = (
-  printJobId: string,
-  ready: boolean,
-  reprinting: boolean,
-  completedPrintJobIds: readonly string[],
-  printingPrintJobId: string | null,
-): PrintJobStatus => {
-  if (printingPrintJobId === printJobId) return "printing";
-  if (completedPrintJobIds.includes(printJobId)) return "completed";
-  if (reprinting) return "waiting";
-  if (ready) return "completed";
-  return "waiting";
-};
+const allPrintJobsCompleted = (executions: readonly PrintJobExecution[]): boolean =>
+  executions.every(({ status }) => status === "completed");
 
 export const AutomaticRegistrationPanel: FC<{
   gateway: RegistrationDeskGateway;
@@ -117,29 +115,52 @@ export const AutomaticRegistrationPanel: FC<{
   const [reprintRequired, setReprintRequired] = useState(false);
   const ready = registrationState === "awaiting_completion";
   const printQueue = product ? createRegistrationPrintQueue(product).snapshot() : [];
+  const executionById = new Map(progress.print_jobs.map((execution) => [execution.id, execution]));
+  const printJobsCompleted = printQueue.every(
+    ({ id }) => executionById.get(id)?.status === "completed",
+  );
+  const hasPrintFailures = progress.print_jobs.some(({ status }) => status === "failed");
   const productUpdated = (updatedProduct: OrderProductRelation) => {
     details.onProductUpdated(updatedProduct);
     setReprintRequired(true);
   };
   const reprint = async (updatedProduct: OrderProductRelation) => {
-    await details.onReprint(updatedProduct);
-    setReprintRequired(false);
+    const executions = await details.onReprint(updatedProduct);
+    setReprintRequired(!allPrintJobsCompleted(executions));
+    return executions;
+  };
+  const retryPrintJob = async (printJobId: string) => {
+    if (!product) return;
+    const executions = await details.onRetryPrintJob(product, printJobId);
+    if (allPrintJobsCompleted(executions)) setReprintRequired(false);
   };
 
   return (
     <>
       <Stack spacing={3} sx={{ p: { xs: 2, sm: 3, md: 4 } }}>
         <Stack spacing={1} sx={{ alignItems: "center", textAlign: "center" }}>
-          {ready ? (
+          {hasPrintFailures ? (
+            <ErrorOutlined color="error" sx={{ fontSize: 56 }} />
+          ) : progress.processing ? (
+            <CircularProgress size={44} />
+          ) : ready ? (
             <CheckCircleOutlined color="success" sx={{ fontSize: 56 }} />
           ) : (
             <CircularProgress size={44} />
           )}
           <Typography variant="h5" sx={{ fontWeight: 800 }}>
-            {ready ? "출력을 확인해주세요" : "자동 접수 진행 중"}
+            {hasPrintFailures
+              ? "일부 출력에 실패했습니다"
+              : progress.processing && progress.stage === "printing"
+              ? "출력을 진행하고 있습니다"
+              : ready ? "출력을 확인해주세요" : "자동 접수 진행 중"}
           </Typography>
           <Typography color="text.secondary">
-            {ready
+            {hasPrintFailures
+              ? "실패한 출력물만 다시 출력한 뒤 접수를 완료해주세요."
+              : progress.processing
+              ? STAGE_LABELS[progress.stage]
+              : ready
               ? "출력물과 참가자를 확인한 뒤 접수를 완료해주세요."
               : STAGE_LABELS[progress.stage]}
           </Typography>
@@ -194,26 +215,58 @@ export const AutomaticRegistrationPanel: FC<{
           {!product ? (
             <Typography color="text.secondary">주문상품 확인 후 출력물이 표시됩니다.</Typography>
           ) : printQueue.length > 0 ? printQueue.map((entry) => {
-            const status = getPrintJobStatus(
-              entry.id,
-              ready,
-              details.reprinting,
-              progress.completedPrintJobIds,
-              progress.printingPrintJobId,
-            );
+            const execution = executionById.get(entry.id);
+            const status = execution?.status ?? "waiting";
             const presentation = PRINT_JOB_STATUS_PRESENTATION[status];
             return (
               <Stack
                 key={entry.id}
-                direction="row"
+                direction={{ xs: "column", sm: "row" }}
                 spacing={1.5}
-                sx={{ alignItems: "center", border: 1, borderColor: "divider", borderRadius: 1, p: 1.5 }}
+                sx={{
+                  alignItems: { xs: "stretch", sm: "center" },
+                  border: 1,
+                  borderColor: "divider",
+                  borderRadius: 1,
+                  p: 1.5,
+                }}
               >
-                {status === "printing" ? <CircularProgress size={24} /> : <PrintOutlined color="action" />}
-                <Typography sx={{ flex: 1 }}>
-                  {getPrintTemplateLabel(entry.job.template_id)}
-                </Typography>
-                <Chip size="small" color={presentation.color} label={presentation.label} />
+                <Stack direction="row" spacing={1.5} sx={{ flex: 1, alignItems: "center" }}>
+                  {status === "printing" ? (
+                    <CircularProgress size={24} />
+                  ) : status === "failed" ? (
+                    <ErrorOutlined color="error" />
+                  ) : (
+                    <PrintOutlined color="action" />
+                  )}
+                  <Box sx={{ flex: 1 }}>
+                    <Typography>{getPrintTemplateLabel(entry.job.template_id)}</Typography>
+                    {execution?.error && (
+                      <Typography variant="caption" color="error">{execution.error}</Typography>
+                    )}
+                    {status === "completed" && execution?.completion_confirmed === false && (
+                      <Typography variant="caption" color="text.secondary">
+                        프린터 전송 완료 · 실제 출력물 확인 필요
+                      </Typography>
+                    )}
+                  </Box>
+                </Stack>
+                <Stack
+                  direction="row"
+                  spacing={1}
+                  sx={{ alignItems: "center", justifyContent: "flex-end" }}
+                >
+                  {status === "failed" && (
+                    <Button
+                      size="small"
+                      disabled={progress.processing || details.reprinting}
+                      onClick={() => void retryPrintJob(entry.id)}
+                    >
+                      다시 출력
+                    </Button>
+                  )}
+                  <Chip size="small" color={presentation.color} label={presentation.label} />
+                </Stack>
               </Stack>
             );
           }) : (
@@ -222,7 +275,11 @@ export const AutomaticRegistrationPanel: FC<{
         </Stack>
 
         {ready && (
-          reprintRequired ? (
+          hasPrintFailures ? (
+            <Alert severity="error">
+              출력 실패가 남아 있어 접수를 완료할 수 없습니다. 실패한 항목만 다시 출력해주세요.
+            </Alert>
+          ) : reprintRequired ? (
             <Alert severity="warning">
               참가자 정보가 변경되었습니다. 최신 정보로 다시 출력해야 접수를 완료할 수 있습니다.
             </Alert>
@@ -236,7 +293,8 @@ export const AutomaticRegistrationPanel: FC<{
         <Button
           variant="contained"
           size="large"
-          disabled={!ready || progress.processing || details.reprinting || reprintRequired}
+          disabled={!ready || progress.processing || details.reprinting || reprintRequired ||
+            !printJobsCompleted}
           onClick={onComplete}
           sx={{ minHeight: 52 }}
         >
@@ -262,7 +320,7 @@ export const AutomaticRegistrationPanel: FC<{
   );
 };
 
-const ProcessingRow: FC<{ label: string; status: PrintJobStatus }> = ({ label, status }) => {
+const ProcessingRow: FC<{ label: string; status: ProcessStatus }> = ({ label, status }) => {
   const presentation = PROCESS_STATUS_PRESENTATION[status];
   return (
     <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
@@ -324,7 +382,7 @@ const OrderProductDetailsDialogContent: FC<{
   details,
 }) => {
   const { data: lookup } = useOrderProductQuery(gateway, productId);
-  const product = lookup.order_product_relation;
+  const product = lookup;
   const [savedChanges, setSavedChanges] = useState(false);
   const [reprintCompleted, setReprintCompleted] = useState(false);
   const reprintAvailable = product.status === "used" &&
@@ -337,13 +395,15 @@ const OrderProductDetailsDialogContent: FC<{
   };
 
   const reprint = async () => {
-    await details.onReprint(product);
-    setSavedChanges(false);
-    setReprintCompleted(true);
+    const executions = await details.onReprint(product);
+    const completed = allPrintJobsCompleted(executions);
+    setSavedChanges(!completed);
+    setReprintCompleted(completed);
   };
 
   return (
     <OrderProductDetails
+      orderId={lookup.order.id}
       product={product}
       gateway={gateway}
       disabled={editingDisabled || details.reprinting}
@@ -476,8 +536,10 @@ export const AutomaticModeBanner: FC<{
 
 export const MockQrInput: FC<{
   disabled: boolean;
+  printFailureTemplateId: string | null;
+  onPrintFailureChange: (templateId: string | null) => void;
   onSubmit: (value: string) => void;
-}> = ({ disabled, onSubmit }) => {
+}> = ({ disabled, printFailureTemplateId, onPrintFailureChange, onSubmit }) => {
   const [value, setValue] = useState("");
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -488,8 +550,8 @@ export const MockQrInput: FC<{
   };
 
   return (
-    <Box component="form" onSubmit={submit} sx={{ width: "100%", maxWidth: 520, px: 2, pb: 2 }}>
-      <Stack direction="row" spacing={1}>
+    <Box component="form" onSubmit={submit} sx={{ width: "100%", maxWidth: 620, px: 2, pb: 2 }}>
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
         <TextField
           fullWidth
           size="small"
@@ -507,6 +569,19 @@ export const MockQrInput: FC<{
         >
           인식
         </Button>
+        <TextField
+          select
+          size="small"
+          label="다음 모의 출력"
+          value={printFailureTemplateId ?? ""}
+          disabled={disabled}
+          onChange={(event) => onPrintFailureChange(event.target.value || null)}
+          sx={{ minWidth: 180 }}
+        >
+          <MenuItem value="">모두 성공</MenuItem>
+          <MenuItem value={DEFAULT_BADGE_TEMPLATE_ID}>명찰 1회 실패</MenuItem>
+          <MenuItem value={DEFAULT_EXCHANGE_VOUCHER_TEMPLATE_ID}>교환권 1회 실패</MenuItem>
+        </TextField>
       </Stack>
     </Box>
   );

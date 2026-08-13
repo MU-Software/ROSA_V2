@@ -9,6 +9,10 @@ export const productSchema = z.object({
   id: z.string(),
   name: z.string(),
   price: z.number(),
+  category: z.object({
+    id: z.string(),
+    name: z.string(),
+  }),
 });
 
 export const productOptionGroupSchema = z.object({
@@ -37,7 +41,12 @@ export const ticketInfoSchema = z.object({
   phone: z.string(),
   email: z.string(),
   organization: z.string().nullable(),
-  contribution_message: z.string().nullable(),
+});
+
+export const orderProductRelationTagSchema = z.object({
+  id: z.string(),
+  code: z.string(),
+  name: z.string(),
 });
 
 export const orderProductRelationSchema = z.object({
@@ -45,6 +54,7 @@ export const orderProductRelationSchema = z.object({
   product: productSchema,
   is_ticket: z.boolean(),
   options: z.array(orderProductOptionRelationSchema),
+  tags: z.array(orderProductRelationTagSchema),
   status: z.enum(ORDER_PRODUCT_STATUSES),
   price: z.number(),
   donation_price: z.number(),

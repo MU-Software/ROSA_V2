@@ -34,10 +34,16 @@ export type PaymentHistory = {
   created_at: IsoDateTime;
 };
 
+export type ProductCategory = {
+  id: EntityId;
+  name: string;
+};
+
 export type Product = {
   id: EntityId;
   name: string;
   price: number;
+  category: ProductCategory;
 };
 
 export type ProductOptionGroup = {
@@ -66,7 +72,12 @@ export type TicketInfo = {
   phone: string;
   email: string;
   organization: string | null;
-  contribution_message: string | null;
+};
+
+export type OrderProductRelationTag = {
+  id: EntityId;
+  code: string;
+  name: string;
 };
 
 export type OrderProductRelation = {
@@ -74,6 +85,7 @@ export type OrderProductRelation = {
   product: Product;
   is_ticket: boolean;
   options: OrderProductOptionRelation[];
+  tags: OrderProductRelationTag[];
   status: OrderProductStatus;
   price: number;
   donation_price: number;

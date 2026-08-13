@@ -1,14 +1,37 @@
 import type {
   EntityId,
+  IsoDateTime,
   Order,
-  OrderProductScancode,
+  OrderProductRelation,
+  OrderProductRelationTag,
   OrderProductStatus,
   TicketInfo,
 } from "../domain";
 
-export type SearchOrdersParams = {
-  query: string;
+export type PaginationParams = {
+  page?: number;
+  page_size?: number;
 };
+
+export type PaginatedResponse<T> = {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: T[];
+};
+
+type OrderFilter =
+  | { keywords: string }
+  | { order_id: EntityId }
+  | { order_product_relation_id: EntityId }
+  | { user_unique_id: EntityId };
+
+export type SearchOrdersParams = PaginationParams & OrderFilter;
+
+export type ListOrderProductsParams = PaginationParams & (
+  | { order_product_relation_id: EntityId; scancode?: never }
+  | { scancode: string; order_product_relation_id?: never }
+);
 
 export type ModifyOrderProductOption = {
   id: EntityId;
@@ -16,6 +39,7 @@ export type ModifyOrderProductOption = {
 };
 
 export type ModifyOrderProductRequest = {
+  order_id: EntityId;
   order_product_relation_id: EntityId;
   status?: OrderProductStatus;
   options?: ModifyOrderProductOption[];
@@ -27,14 +51,24 @@ export type RefundOrderRequest = {
   otp: string;
 };
 
+export type RefundOrderProductRequest = {
+  order_product_relation_id: EntityId;
+  otp: string;
+};
+
 export type RegistrationDeskConfiguration = {
-  event_scope: {
-    category_groups: string[];
+  id: EntityId;
+  name: string;
+  start_date: string;
+  end_date: string;
+  event: {
+    id: EntityId;
+    name: string;
+    event_start_at: IsoDateTime | null;
+    event_end_at: IsoDateTime | null;
+    logo_url: string | null;
   };
-  automatic_check_in: {
-    enabled: boolean;
-    farewell_duration_ms: number;
-  };
+  available_tags: OrderProductRelationTag[];
 };
 
 export type RegistrationDeskStatistics = {
@@ -43,18 +77,19 @@ export type RegistrationDeskStatistics = {
   waiting_count: number;
 };
 
-export type OrderProductLookup = {
-  order: Order;
-  order_product_relation: Order["products"][number];
+export type RegistrationDeskOrderProduct = OrderProductRelation & {
+  short_id: string;
+  order: Pick<Order, "id" | "name" | "current_status" | "first_paid_at">;
 };
 
 export interface RegistrationDeskGateway {
-  searchOrders(params: SearchOrdersParams): Promise<Order[]>;
-  getOrderProductRelation(order_product_relation_id: EntityId): Promise<OrderProductLookup>;
-  getOrderByProductScancode(scancode: OrderProductScancode): Promise<OrderProductLookup>;
-  listOrdersByUserId(user_id: number): Promise<Order[]>;
+  searchOrders(params: SearchOrdersParams): Promise<PaginatedResponse<Order>>;
+  listOrderProducts(
+    params: ListOrderProductsParams,
+  ): Promise<PaginatedResponse<RegistrationDeskOrderProduct>>;
   modifyOrderProduct(request: ModifyOrderProductRequest): Promise<Order>;
-  refundOrder(request: RefundOrderRequest): Promise<Order>;
+  refundOrder(request: RefundOrderRequest): Promise<void>;
+  refundOrderProduct(request: RefundOrderProductRequest): Promise<void>;
   getConfiguration(): Promise<RegistrationDeskConfiguration>;
   getStatistics(): Promise<RegistrationDeskStatistics>;
 }
