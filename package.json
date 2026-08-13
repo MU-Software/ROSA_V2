@@ -15,6 +15,7 @@
     "tauri:android:build": "node scripts/tauri.mjs android build",
     "tauri:ios:dev": "node scripts/tauri.mjs ios dev",
     "tauri:ios:build": "node scripts/tauri.mjs ios build",
+    "tauri:ios:release": "node scripts/tauri.mjs ios build --export-method app-store-connect",
     "play:deploy": "node scripts/play-deploy.mjs"
   },
   "dependencies": {
