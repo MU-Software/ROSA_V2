@@ -60,10 +60,7 @@ const brotherFinished = async (reply: Uint8Array): Promise<boolean> => {
   return status.phaseType !== BROTHER_PHASE_PRINTING;
 };
 
-export const BROTHER_QL_820NWB: PrinterProfile = {
-  id: "brother-ql-820nwb",
-  name: "Brother QL-820NWB",
-  links: { usb: { matches: [{ vendorId: 0x04f9, productId: 0x209d }], chunkBytes: 16384 } },
+const BROTHER_QL_PROFILE: Omit<PrinterProfile, "id" | "name" | "links"> = {
   mediaSizeSource: "device",
   settings: [
     PRINT_PADDING_SETTING_FIELD,
@@ -139,4 +136,18 @@ export const BROTHER_QL_820NWB: PrinterProfile = {
       copies,
     );
   },
+};
+
+export const BROTHER_QL_720NW: PrinterProfile = {
+  ...BROTHER_QL_PROFILE,
+  id: "brother-ql-720nw",
+  name: "Brother QL-720NW",
+  links: { usb: { matches: [{ vendorId: 0x04f9, productId: 0x2044 }], chunkBytes: 16384 } },
+};
+
+export const BROTHER_QL_820NWB: PrinterProfile = {
+  ...BROTHER_QL_PROFILE,
+  id: "brother-ql-820nwb",
+  name: "Brother QL-820NWB",
+  links: { usb: { matches: [{ vendorId: 0x04f9, productId: 0x209d }], chunkBytes: 16384 } },
 };

@@ -1,10 +1,10 @@
-import { BROTHER_QL_820NWB } from "./brother";
+import { BROTHER_QL_720NW, BROTHER_QL_820NWB } from "./brother";
 import { GOOJPRT_PT390 } from "./goojprtPt390";
 import { HPRT_SL43 } from "./hprtSl43";
 import type { DeviceIdentity, DiscoveryFilter, LinkSpec, PrinterProfile } from "./types";
 
 export * from "./types";
-export { brotherGeometry, BROTHER_QL_820NWB, type BrotherLabelGeometry } from "./brother";
+export { brotherGeometry, BROTHER_QL_720NW, BROTHER_QL_820NWB, type BrotherLabelGeometry } from "./brother";
 export {
   LABEL_GAP_MM_SETTING,
   LABEL_HEIGHT_MM_SETTING,
@@ -26,7 +26,12 @@ export { GOOJPRT_PT390 } from "./goojprtPt390";
 export { HPRT_SL43 } from "./hprtSl43";
 export { DIAGNOSTIC_PRINTER_PROFILES, findDiagnosticPrinterProfile } from "./diagnostic";
 
-export const PRINTER_PROFILES: PrinterProfile[] = [BROTHER_QL_820NWB, HPRT_SL43, GOOJPRT_PT390];
+export const PRINTER_PROFILES: PrinterProfile[] = [
+  BROTHER_QL_720NW,
+  BROTHER_QL_820NWB,
+  HPRT_SL43,
+  GOOJPRT_PT390,
+];
 
 /** 16/32-bit 축약 UUID와 대소문자가 달라도 같은 Bluetooth UUID로 비교한다. */
 const normalizeBluetoothUuid = (uuid: string): string => {
