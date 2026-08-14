@@ -51,7 +51,7 @@
     "iOS": {
       "infoPlist": "Info.plist",
       "minimumSystemVersion": "15.0",
-      "bundleVersion": "4",
+      "bundleVersion": "6",
       "developmentTeam": "NBM824WDPS"
     }
   }
