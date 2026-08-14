@@ -26,6 +26,8 @@ import {
 import type { PrinterProfile } from "./types";
 
 const PT390_MAX_DOTS = 576;
+/** 80 mm 용지에서 실제 인쇄 헤드 폭은 72 mm(576 dots)다. */
+const PT390_MAX_MEDIA_WIDTH_MM = 80;
 /** 펌웨어/출고 배치에 따라 모델명과 뒤쪽 식별자의 구분자가 달라진다. */
 const PT390_BLUETOOTH_NAME = /^(?:JLP352|PT[\s_-]?390|QR[\s_-]?380A)(?:[\s_-].*)?$/i;
 
@@ -45,12 +47,12 @@ export const GOOJPRT_PT390: PrinterProfile = {
     },
   },
   mediaSizeSource: "settings",
-  settings: manualLabelSettingFields(PT390_MAX_DOTS / 8),
+  settings: manualLabelSettingFields(PT390_MAX_MEDIA_WIDTH_MM),
   dotsPerMm: 8,
   canvasSize({ settings }) {
     const label = labelSpecFromSettings(settings);
     return {
-      width: Math.floor(label.widthMm * this.dotsPerMm),
+      width: Math.min(Math.floor(label.widthMm * this.dotsPerMm), PT390_MAX_DOTS),
       height: Math.floor(label.heightMm * this.dotsPerMm),
     };
   },
