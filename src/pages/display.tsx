@@ -135,7 +135,46 @@ export const ExternalDisplayPage: FC = () => {
           </Typography>
         )}
       </Stack>
+
+      <DisplayClock />
     </Box>
+  );
+};
+
+const DisplayClock: FC = () => {
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(new Date()), 1_000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const time = [
+    `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
+    `${pad(now.getHours())}:${pad(now.getMinutes())}`,
+  ].join(" ");
+
+  return (
+    <Typography
+      component="time"
+      dateTime={now.toISOString()}
+      aria-label={`현재 시각 ${time}`}
+      sx={{
+        position: "fixed",
+        right: "clamp(2rem, 5vmin, 5rem)",
+        bottom: "clamp(0.75rem, 2vmin, 1.5rem)",
+        color: "rgba(255, 255, 255, 0.56)",
+        fontSize: "clamp(1.375rem, 2.5vmin, 2.25rem)",
+        fontWeight: 600,
+        lineHeight: 1,
+        letterSpacing: "0.04em",
+        fontVariantNumeric: "tabular-nums",
+        userSelect: "none",
+      }}
+    >
+      {time}
+    </Typography>
   );
 };
 
