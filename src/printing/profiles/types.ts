@@ -111,6 +111,8 @@ export type DeviceIdentity = {
   name: string;
   vendorId?: number;
   productId?: number;
+  /** BLE 광고에서 확인한 GATT 서비스 UUID. 이름보다 안정적인 기종 판별값이다. */
+  bleServices?: string[];
 };
 
 export type DiscoveryFilter = {

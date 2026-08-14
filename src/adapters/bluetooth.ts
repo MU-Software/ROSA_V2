@@ -38,14 +38,13 @@ class SppTransport implements DeviceTransport {
     return requested.bluetooth === "granted";
   }
 
-  async list(filter?: DiscoveryFilter): Promise<DiscoveredDevice[]> {
+  async list(): Promise<DiscoveredDevice[]> {
     if (!(await this.ensurePermission())) throw new Error("블루투스 권한이 거부되었습니다");
     const { devices: bonded } = await invoke<{ devices: SppDevice[] }>("plugin:bluetooth-spp|list_devices");
     let discovered: SppDevice[] = [];
     try {
       const result = await invoke<{ devices: SppDevice[] }>("plugin:bluetooth-spp|discover", {
         timeoutMs: SPP_DISCOVER_MS,
-        stopOnNames: filter?.sppNamePatterns?.map((pattern) => pattern.source),
       });
       discovered = result.devices;
     } catch (error) {
@@ -145,33 +144,22 @@ class BleTransport implements DeviceTransport {
   private activeKey: string | undefined;
   private openingKey: string | undefined;
 
-  /**
-   * 아는 프린터가 보이는 즉시 스캔을 끊는다 — 8 초를 다 기다릴 이유가 없다. 대가로 첫
-   * 기기 직후에 나타난 두 번째 프린터는 놓칠 수 있고, 다시 검색하면 잡힌다.
-   */
-  async list(filter?: DiscoveryFilter): Promise<DiscoveredDevice[]> {
+  /** 스캔 시간 동안 발견되는 기기를 모두 모은다. 여러 대를 설정할 때 첫 기기에서 끊지 않는다. */
+  async list(): Promise<DiscoveredDevice[]> {
     if (!(await blec.checkPermissions(true))) throw new Error("블루투스 권한이 거부되었습니다");
 
     let found: DiscoveredDevice[] = [];
-    let onFirstHit: (() => void) | undefined;
-    const firstHit = new Promise<void>((resolve) => {
-      onFirstHit = resolve;
-    });
 
     // startScan 이 타임아웃까지 블록하는지 즉시 돌아오는지 문서가 분명하지 않아
-    // await 하지 않는다 — 블록한다면 await 가 조기 종료를 막는다.
-    const services = filter?.bleServices;
+    // await 하지 않는다. 콜백으로 들어오는 최신 누적 목록을 스캔 종료까지 보관한다.
     const scanning = blec.startScan((devices) => {
       found = devices.map((device) => ({
-          key: device.address,
-          transport: this.kind,
-          name: device.name || device.address,
-          address: device.address,
-        }));
-      const knownFound = devices.some(
-        (device) => !services || device.services.some((uuid) => services.includes(uuid.toLowerCase())),
-      );
-      if (knownFound) onFirstHit?.();
+        key: device.address,
+        transport: this.kind,
+        name: device.name || device.address,
+        address: device.address,
+        bleServices: device.services,
+      }));
     }, BLE_SCAN_MS);
 
     let deadline: ReturnType<typeof setTimeout> | undefined;
@@ -184,7 +172,7 @@ class BleTransport implements DeviceTransport {
     const scanFailure = scanning.then(() => new Promise<never>(() => undefined));
 
     try {
-      await Promise.race([firstHit, timeout, scanFailure]);
+      await Promise.race([timeout, scanFailure]);
     } finally {
       clearTimeout(deadline);
       try {

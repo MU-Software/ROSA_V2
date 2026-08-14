@@ -13,6 +13,8 @@ export type DiscoveredDevice = {
   physicalId?: string;
   /** 블루투스 주소. */
   address?: string;
+  /** BLE 광고에서 확인한 GATT 서비스 UUID. */
+  bleServices?: string[];
 };
 
 export type DeviceSession = ByteStream & {

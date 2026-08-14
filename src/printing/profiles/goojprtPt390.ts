@@ -26,15 +26,17 @@ import {
 import type { PrinterProfile } from "./types";
 
 const PT390_MAX_DOTS = 576;
+/** 펌웨어/출고 배치에 따라 모델명과 뒤쪽 식별자의 구분자가 달라진다. */
+const PT390_BLUETOOTH_NAME = /^(?:JLP352|PT[\s_-]?390|QR[\s_-]?380A)(?:[\s_-].*)?$/i;
 
 export const GOOJPRT_PT390: PrinterProfile = {
   id: "goojprt-pt390",
   name: "GOOJPRT PT-390",
   links: {
     usb: { matches: [{ vendorId: 0x0483, productId: 0x5720 }], chunkBytes: 64 },
-    btspp: { namePattern: /^JLP352-/i, chunkBytes: 4096 },
+    btspp: { namePattern: PT390_BLUETOOTH_NAME, chunkBytes: 4096 },
     ble: {
-      namePattern: /^JLP352-/i,
+      namePattern: PT390_BLUETOOTH_NAME,
       service: "000018f0-0000-1000-8000-00805f9b34fb",
       writeCharacteristic: "00002af1-0000-1000-8000-00805f9b34fb",
       notifyCharacteristic: "00002af0-0000-1000-8000-00805f9b34fb",

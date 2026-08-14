@@ -28,6 +28,14 @@ export { DIAGNOSTIC_PRINTER_PROFILES, findDiagnosticPrinterProfile } from "./dia
 
 export const PRINTER_PROFILES: PrinterProfile[] = [BROTHER_QL_820NWB, HPRT_SL43, GOOJPRT_PT390];
 
+/** 16/32-bit 축약 UUID와 대소문자가 달라도 같은 Bluetooth UUID로 비교한다. */
+const normalizeBluetoothUuid = (uuid: string): string => {
+  const compact = uuid.trim().replace(/[{}-]/g, "").toLowerCase();
+  if (/^[0-9a-f]{4}$/.test(compact)) return `0000${compact}00001000800000805f9b34fb`;
+  if (/^[0-9a-f]{8}$/.test(compact)) return `${compact}00001000800000805f9b34fb`;
+  return compact;
+};
+
 const linkMatches = (link: LinkSpec | undefined, device: DeviceIdentity): boolean => {
   if (!link) return false;
   if ("matches" in link) {
@@ -35,6 +43,9 @@ const linkMatches = (link: LinkSpec | undefined, device: DeviceIdentity): boolea
       match.vendorId === device.vendorId && match.productId === device.productId
     );
   }
+  if ("service" in link && device.bleServices?.some(
+    (service) => normalizeBluetoothUuid(service) === normalizeBluetoothUuid(link.service),
+  )) return true;
   return link.namePattern.test(device.name);
 };
 
