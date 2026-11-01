@@ -1,4 +1,5 @@
 import { BROTHER_QL_720NW, BROTHER_QL_820NWB } from "./brother";
+import { FOURBARCODE_2054N } from "./fourBarcode2054n";
 import { GOOJPRT_PT390 } from "./goojprtPt390";
 import { HPRT_SL43 } from "./hprtSl43";
 import type { DeviceIdentity, DiscoveryFilter, LinkSpec, PrinterProfile } from "./types";
@@ -22,6 +23,7 @@ export {
   validatePrintCopies,
   validateRightMarginDots,
 } from "./common";
+export { FOURBARCODE_2054N } from "./fourBarcode2054n";
 export { GOOJPRT_PT390 } from "./goojprtPt390";
 export { HPRT_SL43 } from "./hprtSl43";
 export { DIAGNOSTIC_PRINTER_PROFILES, findDiagnosticPrinterProfile } from "./diagnostic";
@@ -30,6 +32,7 @@ export const PRINTER_PROFILES: PrinterProfile[] = [
   BROTHER_QL_720NW,
   BROTHER_QL_820NWB,
   HPRT_SL43,
+  FOURBARCODE_2054N,
   GOOJPRT_PT390,
 ];
 
